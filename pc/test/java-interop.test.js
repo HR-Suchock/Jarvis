@@ -14,9 +14,9 @@ const SRC = path.join(__dirname, '..', '..', 'src', 'com', 'suchock', 'jarvis');
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'jlink-'));
 let haveJava = true;
 try {
-  execFileSync('javac', ['--release', '8', '-Xlint:-options', '-d', OUT, ...['LinkJson', 'LinkCore', 'LinkClient'].map((f) => path.join(SRC, f + '.java')), path.join(__dirname, 'java', 'LinkTest.java')], { stdio: 'pipe' });
+  execFileSync('javac', ['-J-Dfile.encoding=UTF-8', '--release', '8', '-Xlint:-options', '-d', OUT, ...['LinkJson', 'LinkCore', 'LinkClient'].map((f) => path.join(SRC, f + '.java')), path.join(__dirname, 'java', 'LinkTest.java')], { stdio: 'pipe' });
 } catch (e) { haveJava = false; }
-const java = (...args) => execFileSync('java', ['-cp', OUT, 'com.suchock.jarvis.LinkTest', ...args], { encoding: 'utf8', env: { ...process.env, JAVA_TOOL_OPTIONS: '' } }).trim();
+const java = (...args) => execFileSync('java', ['-Dfile.encoding=UTF-8', '-cp', OUT, 'com.suchock.jarvis.LinkTest', ...args], { encoding: 'utf8', env: { ...process.env, JAVA_TOOL_OPTIONS: '' } }).trim();
 
 test('java: pairing code, room id and key derivation match node', { skip: !haveJava }, () => {
   const secret = proto.newSecret();
@@ -50,7 +50,7 @@ test('live: java "phone" client <-> node "pc" relay through the fake database', 
   const got = [];
   const pc = new Relay(() => ({ enabled: true, dbUrl: db.url, secret }), async (c) => { got.push(c); return { ok: true, msg: 'pc opened ' + c.arg }; }, { me: 'pc', peer: 'phone' });
   pc.start();
-  const child = spawn('java', ['-cp', OUT, 'com.suchock.jarvis.LinkTest', 'phone', db.url, secret], { env: { ...process.env, JAVA_TOOL_OPTIONS: '' } });
+  const child = spawn('java', ['-Dfile.encoding=UTF-8', '-cp', OUT, 'com.suchock.jarvis.LinkTest', 'phone', db.url, secret], { env: { ...process.env, JAVA_TOOL_OPTIONS: '' } });
   let out = '';
   child.stdout.on('data', (b) => (out += b));
   await new Promise((resolve) => { const t = setInterval(() => { if (out.includes('READY')) { clearInterval(t); resolve(); } }, 100); });
