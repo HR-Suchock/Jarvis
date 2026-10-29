@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_talk_short">Talk</string>
+    <string name="shortcut_talk_long">Talk to Jarvis</string>
+    <string name="widget_desc">A mini Jarvis status display. Tap to open Jarvis</string>
+    <string name="widget_label">Open Jarvis</string>
+    <string name="widget_small_desc">Small Jarvis clock and battery</string>
+    <string name="tile_label">Jarvis</string>
+</resources>
