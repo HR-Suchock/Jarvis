@@ -1,0 +1,23 @@
+name: Build Jarvis for Windows
+on:
+  workflow_dispatch:
+  push:
+    tags: ['pc-v*']
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Install
+        run: npm install
+      - name: Test
+        run: npm test
+      - name: Build installer and portable exe
+        run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Windows
+          path: |
+            dist/*.exe
