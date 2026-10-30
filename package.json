@@ -1,0 +1,28 @@
+{
+  "name": "jarvis-pc",
+  "version": "1.0.0",
+  "description": "J.A.R.V.I.S for Windows",
+  "main": "src/main/main.js",
+  "author": "MD Humayun Rashid Suchock",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "sync": "node scripts/sync-assets.js",
+    "start": "npm run sync && electron .",
+    "dist": "npm run sync && electron-builder --win --publish never",
+    "test": "node --test --test-timeout=30000 test/*.test.js"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.suchock.jarvis.pc",
+    "productName": "Jarvis",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/main/**/*", "renderer/**/*", "build/icon.png", "package.json"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "build/icon.png" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "Jarvis-Setup-${version}.${ext}" },
+    "portable": { "artifactName": "Jarvis-Portable-${version}.${ext}" }
+  }
+}
