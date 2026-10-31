@@ -11,7 +11,7 @@ const { transcribe } = require('./stt');
 const { createActions, TIER } = require('./actions');
 const { Relay } = require('./relay');
 const proto = require('./link-protocol');
-const extra = require('./pc-extra-actions')({ clipboard, shell });
+const extra = require('./pc-extra-actions')({ clipboard, shell, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
 const TIERS = Object.assign({}, TIER, extra.TIER);
 
 const APP_URL = 'jarvis://app/';
@@ -52,16 +52,31 @@ function applyLink() {
 
 
 // The page asks for actions synchronously (like the Android bridge), but the extra actions are asynchronous.
-// For commands typed/spoken on this PC they run in a short-lived helper process that returns the real reply.
+// For commands typed/spoken on this PC they run on a worker thread; this thread waits on a shared flag for the real reply.
+let xWorker = null;
+function getXWorker() {
+  if (xWorker) return xWorker;
+  const { Worker } = require('worker_threads');
+  const paths = {};
+  ['downloads', 'documents', 'desktop', 'pictures', 'music', 'videos'].forEach((n) => { try { paths[n] = app.getPath(n); } catch (e) { /* ignore */ } });
+  // inside the packaged app the worker files live in app.asar.unpacked (see "asarUnpack" in package.json)
+  const dir = __dirname.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+  xWorker = new Worker(path.join(dir, 'extra-worker.js'), { workerData: { paths } });
+  xWorker.on('error', () => { xWorker = null; });
+  xWorker.on('exit', () => { xWorker = null; });
+  xWorker.unref();
+  return xWorker;
+}
 function runExtraSync(type, arg, arg2) {
   try {
-    const code = "const m=require(process.env.JARVIS_MOD)({});m.run(process.env.JARVIS_T,process.env.JARVIS_A,process.env.JARVIS_B).then(r=>{process.stdout.write(JSON.stringify(r));process.exit(0)})";
-    const r = require('child_process').spawnSync(process.execPath, ['-e', code], {
-      env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1', JARVIS_MOD: path.join(__dirname, 'pc-extra-actions.js'), JARVIS_T: type, JARVIS_A: arg, JARVIS_B: arg2 }),
-      encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 1 << 20,
-    });
-    const o = JSON.parse(String(r.stdout || '').trim());
-    return o && typeof o.msg === 'string' ? { ok: !!o.ok, msg: o.msg } : { ok: false, msg: 'That did not work.' };
+    const { MessageChannel, receiveMessageOnPort } = require('worker_threads');
+    const sab = new SharedArrayBuffer(4), flag = new Int32Array(sab), ch = new MessageChannel();
+    getXWorker().postMessage({ port: ch.port2, sab, type, arg, arg2 }, [ch.port2]);
+    const w = Atomics.wait(flag, 0, 0, 25000);
+    const m = w === 'timed-out' ? null : receiveMessageOnPort(ch.port1);
+    ch.port1.close();
+    const o = m && m.message;
+    return o && typeof o.msg === 'string' ? { ok: !!o.ok, msg: o.msg } : { ok: false, msg: 'That took too long.' };
   } catch (e) { return { ok: false, msg: 'That did not work.' }; }
 }
 
@@ -263,6 +278,7 @@ app.whenReady().then(() => {
   refreshDisk(); setInterval(refreshDisk, 120000);
   createWindow(process.argv.includes('--hidden') && linkCfg().enabled);
   applyLink();
+  setTimeout(() => { try { extra.refreshMediaIndex().catch(() => {}); getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);
 });
 
 app.on('second-instance', showWin);

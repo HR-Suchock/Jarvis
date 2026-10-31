@@ -1,6 +1,6 @@
 {
   "name": "jarvis-pc",
-  "version": "1.0.0",
+  "version": "1.21.0",
   "description": "J.A.R.V.I.S for Windows",
   "main": "src/main/main.js",
   "author": "MD Humayun Rashid Suchock",
@@ -19,10 +19,50 @@
   "build": {
     "appId": "com.suchock.jarvis.pc",
     "productName": "Jarvis",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["src/main/**/*", "renderer/**/*", "build/icon.png", "package.json"],
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "build/icon.png" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "Jarvis-Setup-${version}.${ext}" },
-    "portable": { "artifactName": "Jarvis-Portable-${version}.${ext}" }
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/**/*",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Jarvis",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "include": "build/installer.nsh",
+      "artifactName": "Jarvis-Setup-${version}.${ext}",
+      "uninstallDisplayName": "Jarvis"
+    },
+    "asarUnpack": [
+      "src/main/extra-worker.js",
+      "src/main/pc-extra-actions.js"
+    ]
   }
 }

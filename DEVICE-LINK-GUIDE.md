@@ -9,7 +9,7 @@ This package contains
 **Easiest – let GitHub build it**
 1. Put this whole folder in a GitHub repository (the `pc` folder must stay next to `assets`).
 2. On GitHub: **Actions → "Build Jarvis for Windows" → Run workflow**.
-3. When it finishes, download the **Jarvis-Windows** artifact: `Jarvis-Setup-1.0.0.exe` (installer) and `Jarvis-Portable-1.0.0.exe` (no install).
+3. When it finishes, download the **Jarvis-Windows** artifact: `Jarvis-Setup-1.21.0.exe` (the installer, the only file).
 
 **Or on your own Windows PC** (needs Node.js 20+):
 ```
@@ -96,6 +96,21 @@ Say these from the phone with "on my PC …" (or just say/type them on the PC wh
 | "sign out of my PC" · "on my PC empty the recycle bin" | asks yes/no on the phone first | power commands |
 
 The phone app also has quick buttons for PC STATUS, BRIGHT +/−, DARK MODE in Settings › Device Link.
+
+### Movies, music and YouTube on the PC (v1.21.0 — needs the updated PC app)
+| Say | What happens | Switch needed on the PC |
+|---|---|---|
+| "on my PC play movie Spiderman" · "play the movie The Dark Knight on my PC" | finds the movie file by name on the PC and plays it in the default player | remote control |
+| "on my PC play song Shape of You" · "play music Believer" | finds the song file and plays it | remote control |
+| "on my PC play despacito" | plays a matching local file; if there is none it finds the first YouTube result and plays it | remote control |
+| "on my PC open YouTube and play Believer" · "play Shape of You on YouTube on my PC" | opens the first matching YouTube video (autoplay) in the PC browser | remote control |
+| "on my PC play some music" · "shuffle my music" · "play a random movie" | random song or big video from the PC library | remote control |
+| "on my PC pause the music" · "resume" · "next song" · "previous song" | media keys | remote control |
+| "on my PC stop the movie" · "stop the music" · "close VLC" | closes the local media player (the "off" switch) | typing and key presses |
+| "on my PC find movie Inception" · "list my movies" · "show my songs" | tells you how many it found and the best names | remote control |
+| "on my PC open downloads" · "open music folder" · "open the recycle bin" | opens the folder on the PC | remote control |
+
+The PC looks in Music, Videos, Downloads, Desktop, Documents and in root folders such as `D:\Movies`, `D:\Music`, `D:\Songs` (all other drives D: to Z:). It indexes in the background (new files appear within 5 minutes). YouTube autoplay depends on the browser's autoplay rules; if it does not start, click the page once.
 
 ## Safety notes
 * Hostile web text can't trigger shutdown/restart/sleep/close — those only come from your own spoken/typed command (or the quick-control buttons), never from the AI's action tags.

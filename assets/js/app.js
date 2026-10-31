@@ -748,6 +748,28 @@
     if (/^(?:cancel|abort|stop) (?:the )?(?:shutdown|restart|reboot)$/.test(t)) return act('cancelshutdown', '', '', true);
     if (/^(?:take (?:a )?|capture (?:a )?|grab (?:a )?)?screenshot$|^screen ?shot$/.test(t)) return act('screenshot');
     if (/^(?:show (?:the )?desktop|minimi[sz]e (?:all|everything))$/.test(t)) return act('key', 'home', '', true);
+    // ---- PC movies / music / YouTube (handled by pc-extra-actions.js on the PC)
+    var KMAP = { movie: 'movie', film: 'movie', video: 'video', episode: 'video', show: 'video', series: 'video', song: 'music', music: 'music', track: 'music', audio: 'music', file: '' };
+    var PCLOC = '(?: (?:from|on|in|at) (?:my |the )?(?:pc|computer|laptop|local|hard ?drive|storage|files|downloads|desktop|d drive|c drive))?';
+    var yt1 = t.match(/^(?:open |go to |launch )?youtube(?: and| then)? (?:play|search(?: for)?|find|watch|put on)(?: me)?(?: the| a| some)? (.{2,100})$/) ||
+              t.match(/^(?:play|watch|put on|search(?: for)?) (.{2,100}?) (?:on|in|from|at|using) youtube$/);
+    if (yt1 && !/^(?:youtube|you tube)$/.test(yt1[1])) return act('ytplay', yt1[1]);
+    if ((m = t.match(new RegExp('^(?:play|watch|open|start|put on|run)(?: me)?(?: the| a| an| my| some)? (movie|film|video|episode|show|series|song|music|track|audio|file)(?: called| named| titled| with the name)? (.{2,100}?)' + PCLOC + '$'))) && !/^(?:player|app|apps|library|folder|random|any|some)\b|^(?:random|any|some)$|(?:folder|settings|app|player)$/.test(m[2]))
+      return act('playfile', m[2], KMAP[m[1]]);
+    if ((m = t.match(/^(?:play|watch|put on) (?:the |a |my )?(.{2,100}?) (movie|film|song|music video)$/)) && !/ on youtube$/.test(t) && !/^(?:random|any|some|good|new|old|latest|best)$/.test(m[1])) return act('playfile', m[1], KMAP[m[2].split(' ')[0]] || (m[2] === 'music video' ? 'video' : ''));
+    if ((m = t.match(/^(?:play|put on|start|shuffle)(?: me)? (?:some |any |a random |random |my )?(?:random )?(music|songs?|movies?|films?)(?: at random| randomly| for me)?$|^shuffle (?:my )?(music|songs)$|^surprise me with (?:a |some )?(music|song|movie|film)$/)) && (remote || /random|some|any|shuffle|surprise|my/.test(t))) {
+      var rk = (m[1] || m[2] || m[3]); return act('playrandom', /movie|film/.test(rk) ? 'movie' : 'music');
+    }
+    if (remote && (m = t.match(/^(?:play|put on) (.{2,80})$/)) && !/^(?:music|songs?|video|videos|movies?|films?|playback|the music|the song|the video|the movie|it|that|this|something|again|youtube|spotify|netflix|vlc|chrome|[a-z]+ (?:app|player))$/.test(m[1]) && !/^(?:the )?(?:next|previous|last) /.test(m[1]))
+      return act('playany', m[1]);
+    if ((m = t.match(/^(?:stop|close|quit|exit|kill|end)(?: the| my)? (?:movie|film|video|music|song|songs|player|media player|vlc|playback|playing)$|^(?:turn|switch) off (?:the )?(?:movie|film|music|song|video|player|media player)$/))) return act('stopmedia');
+    if (/^(?:turn|switch) on (?:the )?(?:music|song|movie|film|video|player)$/.test(t)) return act('media', 'play');
+    if ((m = t.match(/^(?:find|search for|look for|do i have)(?: me)?(?: a| an| the| any)? (movie|film|song|music|video|episode|file)s? (?:called |named |about |with )?(.{2,80})$/)))
+      return act('medialist', m[2], KMAP[m[1]]);
+    if ((m = t.match(/^(?:list|show|what)(?: me)?(?: my| the| all)? (movies|films|songs|music|videos)(?: do i have| on (?:my )?(?:pc|computer))?$/)))
+      return act('medialist', '', KMAP[m[1].replace(/s$/, '')] || (m[1] === 'music' ? 'music' : ''));
+    if ((m = t.match(/^open (?:my |the )?(downloads|documents|desktop|pictures|photos|music|videos|movies|recycle bin)(?: folder)?$/)) && (remote || /folder$|recycle bin$/.test(t))) return act('openfolder', m[1]);
+
     // ---- more PC controls (handled by pc-extra-actions.js on the PC)
     if (/^(?:pc|computer|system) (?:status|stats|health)$|^how(?:'s| is) (?:my |the )?(?:pc|computer)(?: doing)?$/.test(t) || (remote && /^(?:status|system status|diagnostics)$/.test(t))) return act('pcinfo', 'status', '', false);
     if (/^(?:pc |computer )?(?:cpu|processor)(?: usage| load)?$/.test(t) && (remote || /^(?:pc|computer) /.test(t) || /usage|load/.test(t))) return act('pcinfo', 'cpu');
@@ -792,7 +814,7 @@
   function remoteIntent(rt) {
     if (rt.target === SELF) return localIntent(rt.rest);
     rt.rest = rt.rest.replace(/^(?:play|skip to|go to) (?:the )?(next|previous|last) (?:song|track)$/, function (_, w) { return (w === 'last' ? 'previous' : w) + ' song'; })
-      .replace(/^(?:pause|stop|resume) (?:the )?(?:music|song|video|playback)$/, function (x) { return /^resume/.test(x) ? 'play' : 'pause'; });
+      .replace(/^(?:pause|resume|stop) (?:the )?(?:music|song|video|playback)$/, function (x) { return /^resume/.test(x) ? 'play' : (/^stop/.test(x) && rt.target === 'pc') ? x : 'pause'; });
     var inner = (rt.target === 'pc' && pcIntent(rt.rest, true)) || localIntent(rt.rest);
     if (inner && inner.kind === 'action') return { kind: 'remote', target: rt.target, type: inner.type, arg: inner.arg, arg2: inner.arg2, quiet: inner.quiet };
     return { kind: 'reply', text: 'I can relay commands such as opening apps, volume, media, timers and typing to your ' + (rt.target === 'pc' ? 'PC' : 'phone') + ', ' + addrName() + ', but not that one.' };
@@ -2173,7 +2195,7 @@
       var qh = el('div', 'dl-note', 'Quick controls for your ' + OTHER + ':'); box.appendChild(qh);
       var quick = PC
         ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off']]
-        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
+        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['RANDOM MUSIC', 'playrandom', 'music'], ['STOP PLAYER', 'stopmedia', ''], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
       var qr = el('div', 'row'); qr.style.cssText = 'margin:0 0 10px;flex-wrap:wrap';
       quick.forEach(function (q) { qr.appendChild(btn(q[0], '', function () { linkSend(q[1], q[2], '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), 3200); }); })); });
       box.appendChild(qr);
@@ -2418,7 +2440,7 @@
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
       ['9 · Routines', '<p>Open <b>Settings › Conversations &amp; Commands › Routines</b> (or say “my routines”). Give a routine a name such as <b>good night</b> and write one command per line, for example “volume down”, “flashlight off”, “set an alarm for 7 am”. Then just say “good night” or “run good night”. Calls and messages are never run from a routine. Saying <b>leaving home</b> or <b>I am home</b> gives you a quick briefing with weather, battery and today’s reminders.</p>'],
       ['10 · Memory, safety and offline', '<ul><li>Say “remember my gym is at 6”, then ask “what is my gym time?”. Say “what do you remember” to see or delete everything.</li><li>Jarvis asks <b>yes / no</b> before sending a text or calling an emergency number. You can answer by voice. Change this in <b>Settings › Security</b>.</li><li>With no internet say “offline mode” to see what still works.</li></ul>'],
-      ['11 · Link to your PC', '<p>Control your PC from this phone, and this phone from your PC, with a free private link.</p><ol><li>Open <b>Settings › Device Link</b>. It shows every setup step and a <b>COPY RULES</b> button.</li><li>Create the link on one device and paste the pairing code on the other.</li><li>Tap <b>TEST LINK</b>, then say “on my PC open Chrome”.</li></ol><p>Typing, calls and texts from the other device stay <b>off</b> until you switch them on. Everything is encrypted and only your two devices can read it.</p>'],
+      ['11 · Link to your PC', '<p>Control your PC from this phone, and this phone from your PC, with a free private link.</p><ol><li>Open <b>Settings › Device Link</b>. It shows every setup step and a <b>COPY RULES</b> button.</li><li>Create the link on one device and paste the pairing code on the other.</li><li>Tap <b>TEST LINK</b>, then say “on my PC open Chrome”.</li></ol><p>Examples: “on my PC play movie Spiderman”, “on my PC play song Shape of You”, “on my PC open YouTube and play Believer”, “on my PC stop the movie”.</p><p>Typing, calls and texts from the other device stay <b>off</b> until you switch them on. Everything is encrypted and only your two devices can read it.</p>'],
       ['12 · Voice and language', '<p>In <b>Settings › Voice</b> choose the voice style, speed and language (English, Bangla or Hindi). Use <b>TEST ENGLISH</b> and the other test buttons to hear it. If a voice sounds wrong, install the language voice from your phone’s text-to-speech settings.</p>'],
       ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p>'],
       ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this phone and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p>'],
@@ -2520,7 +2542,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.20.1' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.21.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
