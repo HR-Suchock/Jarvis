@@ -72,11 +72,11 @@ function runExtraSync(type, arg, arg2) {
     const { MessageChannel, receiveMessageOnPort } = require('worker_threads');
     const sab = new SharedArrayBuffer(4), flag = new Int32Array(sab), ch = new MessageChannel();
     getXWorker().postMessage({ port: ch.port2, sab, type, arg, arg2 }, [ch.port2]);
-    const w = Atomics.wait(flag, 0, 0, 25000);
+    const w = Atomics.wait(flag, 0, 0, 45000);
     const m = w === 'timed-out' ? null : receiveMessageOnPort(ch.port1);
     ch.port1.close();
     const o = m && m.message;
-    return o && typeof o.msg === 'string' ? { ok: !!o.ok, msg: o.msg } : { ok: false, msg: 'That took too long.' };
+    return o && typeof o.msg === 'string' ? { ok: !!o.ok, msg: o.msg } : { ok: false, msg: 'That took too long. I may still be indexing your drives, so try again in a minute.' };
   } catch (e) { return { ok: false, msg: 'That did not work.' }; }
 }
 
@@ -278,7 +278,7 @@ app.whenReady().then(() => {
   refreshDisk(); setInterval(refreshDisk, 120000);
   createWindow(process.argv.includes('--hidden') && linkCfg().enabled);
   applyLink();
-  setTimeout(() => { try { extra.refreshMediaIndex().catch(() => {}); getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);
+  setTimeout(() => { try { getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);
 });
 
 app.on('second-instance', showWin);

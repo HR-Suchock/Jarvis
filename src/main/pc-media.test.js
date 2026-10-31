@@ -8,6 +8,7 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   const BIG = 200 * 1024 * 1024;
   mk('Music/Ed Sheeran - Shape of You.mp3'); mk('Music/Arijit Singh/Tum Hi Ho.mp3'); mk('Music/Imagine Dragons - Believer (Official Audio).m4a'); mk('Downloads/random notes.txt'); mk('Music/ReadMe.exe');
   mk('Videos/Spiderman.2002.1080p.BluRay.x264.mkv', BIG); mk('Videos/Movies/The Dark Knight (2008).mp4', BIG); mk('Videos/funny cat clip.mp4', 3 * 1024 * 1024); mk('Desktop/Interstellar.2014.720p.mkv', BIG);
+  mk('Pictures/Beach Holiday 2023.jpg', 300 * 1024); mk('Pictures/tiny icon.png', 2 * 1024); mk('Documents/CV Suchock.pdf'); mk('Documents/Budget 2024.xlsx'); mk('D_drive/Photos/Eid Family.JPG', 500 * 1024); mk('Downloads/setup.exe'); mk('Downloads/run.bat'); mk('Downloads/script.ps1'); mk('Downloads/link.lnk');
   fs.mkdirSync(path.join(root, 'Music/node_modules'), { recursive: true }); fs.writeFileSync(path.join(root, 'Music/node_modules/hidden song.mp3'), '');
   const g = (n) => path.join(root, { downloads: 'Downloads', documents: 'Documents', desktop: 'Desktop', pictures: 'Pictures', music: 'Music', videos: 'Videos' }[n]);
   const opened = [], urls = [], calls = [];
@@ -15,7 +16,7 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   const exec = (file, args, opts, cb) => { calls.push({ file, args, env: opts.env }); const s = args[args.length - 1] || ''; cb(null, /Stop-Process/.test(s) ? (opts.env.__none ? '0' : '2') : 'ok', ''); };
   let html = '<html>..."videoRenderer":{"videoId":"dQw4w9WgXcQ","thumbnail":{},"title":{"runs":[{"text":"Rick \\"Never\\" Gonna Give You Up"}]}...</html>';
   const fetched = [];
-  const e = make({ exec, platform: 'win32', shell, getPath: g, fetchText: async (u) => { fetched.push(u); if (html === 'THROW') throw new Error('net'); return html; }, random: () => 0 });
+  const e = make({ exec, platform: 'win32', shell, getPath: g, mediaRoots: [path.join(root, 'D_drive')], fetchText: async (u) => { fetched.push(u); if (html === 'THROW') throw new Error('net'); return html; }, random: () => 0 });
   for (const t of ['playfile', 'playany', 'playrandom', 'ytplay', 'medialist', 'openfolder']) ck('tier ctl ' + t, e.tier(t) === 'ctl');
   ck('tier input stopmedia', e.tier('stopmedia') === 'input');
   let r = await e.run('playfile', 'shape of you', 'music'); ck('song by name', r.ok && /Shape of You/.test(r.msg) && /Shape of You/.test(opened.pop()), r);
@@ -52,6 +53,19 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   const none = make({ exec: (f, a, o, cb) => cb(null, '0', ''), platform: 'win32', shell, getPath: g });
   r = await none.run('stopmedia'); ck('stopmedia none running', r.ok && /No media player/.test(r.msg), r);
   const lin = make({ exec, platform: 'linux', shell, getPath: g }); r = await lin.run('stopmedia'); ck('stopmedia non-windows', !r.ok && /only works on Windows/.test(r.msg), r);
+  r = await e.run('playfile', 'beach holiday', 'photo'); ck('open photo', r.ok && /Opening Beach Holiday/.test(r.msg), r);
+  r = await e.run('playfile', 'eid family', 'photo'); ck('photo on another drive/root (upper-case ext)', r.ok && /Eid Family/.test(r.msg), r);
+  r = await e.run('playfile', 'tiny icon', 'photo'); ck('tiny icons are skipped', !r.ok, r);
+  r = await e.run('playfile', 'cv suchock', 'doc'); ck('open pdf document', r.ok && /Opening CV Suchock/.test(r.msg), r);
+  r = await e.run('playfile', 'budget', ''); ck('any file kind finds the xlsx', r.ok && /Budget 2024/.test(r.msg), r);
+  for (const n of ['setup', 'run', 'script', 'link']) { r = await e.run('playfile', n, ''); ck('never opens programs/scripts: ' + n, !r.ok, r); }
+  r = await e.run('playfile', 'latest', 'photo'); ck('latest photo', r.ok && /Opening/.test(r.msg), r);
+  r = await e.run('playfile', 'latest', 'doc'); ck('latest document', r.ok && /Opening/.test(r.msg), r);
+  r = await e.run('medialist', '', 'photo'); ck('list photos', r.ok && /2 photos/.test(r.msg), r);
+  r = await e.run('medialist', 'budget', 'doc'); ck('list documents matching', r.ok && /1 documents matching/.test(r.msg), r);
+  r = await e.run('playany', 'beach holiday'); ck('playany does not open photos', r.ok && /YouTube/.test(r.msg), r);
+  r = await e.run('openfolder', 'drive:Q'); ck('missing drive reported', !r.ok && /cannot find drive Q/.test(r.msg), r);
+  r = await e.run('openfolder', 'drive:..'); ck('bad drive arg refused', !r.ok);
   ck('scoring sanity', e.score('batman', 'spiderman 2002') < 45 && e.score('shape of you', 'ed sheeran shape of you') >= 80);
   fs.rmSync(root, { recursive: true, force: true });
   console.log('bad', bad); process.exit(bad ? 1 : 0);

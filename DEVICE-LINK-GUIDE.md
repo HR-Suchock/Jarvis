@@ -9,7 +9,7 @@ This package contains
 **Easiest – let GitHub build it**
 1. Put this whole folder in a GitHub repository (the `pc` folder must stay next to `assets`).
 2. On GitHub: **Actions → "Build Jarvis for Windows" → Run workflow**.
-3. When it finishes, download the **Jarvis-Windows** artifact: `Jarvis-Setup-1.21.0.exe` (the installer, the only file).
+3. When it finishes, download the **Jarvis-Windows** artifact: `Jarvis-Setup-1.0.0.exe` (installer) and `Jarvis-Portable-1.0.0.exe` (no install).
 
 **Or on your own Windows PC** (needs Node.js 20+):
 ```
@@ -102,6 +102,7 @@ The phone app also has quick buttons for PC STATUS, BRIGHT +/−, DARK MODE in S
 |---|---|---|
 | "on my PC play movie Spiderman" · "play the movie The Dark Knight on my PC" | finds the movie file by name on the PC and plays it in the default player | remote control |
 | "on my PC play song Shape of You" · "play music Believer" | finds the song file and plays it | remote control |
+| "open Marvel Studios file" · "open the Iron Man movie" · "play Shape of You song" (typed or spoken on the PC itself too) | same: finds it by name and plays it | remote control |
 | "on my PC play despacito" | plays a matching local file; if there is none it finds the first YouTube result and plays it | remote control |
 | "on my PC open YouTube and play Believer" · "play Shape of You on YouTube on my PC" | opens the first matching YouTube video (autoplay) in the PC browser | remote control |
 | "on my PC play some music" · "shuffle my music" · "play a random movie" | random song or big video from the PC library | remote control |
@@ -110,7 +111,18 @@ The phone app also has quick buttons for PC STATUS, BRIGHT +/−, DARK MODE in S
 | "on my PC find movie Inception" · "list my movies" · "show my songs" | tells you how many it found and the best names | remote control |
 | "on my PC open downloads" · "open music folder" · "open the recycle bin" | opens the folder on the PC | remote control |
 
-The PC looks in Music, Videos, Downloads, Desktop, Documents and in root folders such as `D:\Movies`, `D:\Music`, `D:\Songs` (all other drives D: to Z:). It indexes in the background (new files appear within 5 minutes). YouTube autoplay depends on the browser's autoplay rules; if it does not start, click the page once.
+**Photos, documents and drives (v1.22.0).** The PC now searches **every drive (C: to Z:)** — your whole PC, not just a few folders:
+
+| Say | What happens |
+|---|---|
+| "on my PC open photo Beach Holiday" · "show me picture Eid family" · "open the beach holiday photo" | opens the photo in the default viewer |
+| "on my PC open document Budget" · "open my CV pdf" · "open budget excel file" | opens the PDF / Word / Excel / PowerPoint / text file |
+| "on my PC open my latest photo" · "play the latest movie" · "play the newest song" · "open my latest download" | the most recently changed file of that kind |
+| "on my PC list my photos" · "list my documents" · "find photo holiday" · "find document budget" | how many it found, and the best names |
+| "on my PC open D drive" · "open drive E" | opens that drive in File Explorer |
+
+It searches movies and videos, songs, photos (jpg, png, heic…) and documents (pdf, docx, xlsx, pptx, txt…) on every fixed drive, skipping Windows, Program Files, AppData, temp and cache folders. Programs and scripts (.exe, .bat, .ps1, .lnk, …) are never opened. The first search after starting Jarvis builds an index in the background (large disks can take a minute); it refreshes every 10 minutes, and a missing file triggers an immediate re-scan.
+
 
 ## Safety notes
 * Hostile web text can't trigger shutdown/restart/sleep/close — those only come from your own spoken/typed command (or the quick-control buttons), never from the AI's action tags.

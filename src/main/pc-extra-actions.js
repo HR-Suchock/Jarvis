@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Jarvis PC — extra remote/local actions (v1.21.0: + local movies/music, YouTube autoplay, player on/off).
+ * Jarvis PC — extra remote/local actions (v1.22.0: whole-PC library — every drive: movies, music, photos, documents; YouTube autoplay; player on/off).
  *
  * Drop this file next to the other main-process files (e.g. pc/src/main/pc-extra-actions.js) and call it
  * from the place where the PC handles an action `type` (both for commands typed/spoken on the PC and for
@@ -64,9 +64,12 @@ const PS_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', 
 // ---- local media library ------------------------------------------------------------------------------------
 const EXT = {
   music: ['.mp3', '.m4a', '.flac', '.wav', '.aac', '.ogg', '.opus', '.wma'],
-  video: ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.flv', '.mpg', '.mpeg']
+  video: ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.flv', '.mpg', '.mpeg'],
+  photo: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.tif', '.tiff'],
+  // documents: only passive file types — never programs or scripts (.exe .bat .cmd .ps1 .vbs .js .msi .lnk ... are never indexed)
+  doc: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf', '.odt', '.ods', '.odp', '.csv', '.epub']
 };
-const SKIP_DIRS = /^(?:node_modules|\$recycle\.bin|system volume information|appdata|\.git|windows|program files|program files \(x86\)|programdata|\.cache|cache)$/i;
+const SKIP_DIRS = /^(?:node_modules|\$recycle\.bin|system volume information|appdata|\.git|windows|windows\.old|program files|program files \(x86\)|programdata|recovery|config\.msi|onedrivetemp|\.cache|cache|temp|tmp|\$windows\.~bt|\$winreagent|msocache|perflogs|steamapps|\.gradle|\.m2|\.npm|site-packages)$/i;
 const MOVIE_MIN_BYTES = 150 * 1024 * 1024;        // "a movie" means a big video file, not a short clip
 const ROOT_GUESSES = ['Movies', 'Films', 'Videos', 'Music', 'Songs', 'Series', 'Shows', 'Downloads', 'Entertainment', 'Media'];
 // Real media players that "stop the movie / music" may close (fixed list)
@@ -76,7 +79,7 @@ const FOLDERS = { downloads: 'downloads', documents: 'documents', desktop: 'desk
 function norm(x) { return String(x || '').toLowerCase().replace(/[\u2018\u2019']/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9\u0980-\u09ff\u0900-\u097f]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 const NOISE = /\b(?:1080p|720p|480p|2160p|4k|x264|x265|h264|h265|hevc|bluray|brrip|webrip|web dl|webdl|hdrip|dvdrip|aac|ac3|yify|yts|rarbg|official|video|audio|lyrics|lyric|hd|mp3)\b/g;
 function nameKey(file) { return norm(path.basename(file, path.extname(file))).replace(NOISE, ' ').replace(/\s+/g, ' ').trim(); }
-function kindOf(file) { const e = path.extname(file).toLowerCase(); return EXT.music.indexOf(e) >= 0 ? 'music' : EXT.video.indexOf(e) >= 0 ? 'video' : null; }
+function kindOf(file) { const e = path.extname(file).toLowerCase(); return EXT.music.indexOf(e) >= 0 ? 'music' : EXT.video.indexOf(e) >= 0 ? 'video' : EXT.photo.indexOf(e) >= 0 ? 'photo' : EXT.doc.indexOf(e) >= 0 ? 'doc' : null; }
 
 /** Scores how well a file name matches the spoken words. 0 = no match. */
 function score(query, key) {
@@ -144,37 +147,40 @@ function make(deps) {
 
   // ---------------------------------------------------------------- media index (built in the background, cached 5 minutes)
   let index = null, indexAt = 0, indexing = null;
+  // Every fixed drive (C: .. Z:) is searched. Your own folders go first so the most useful results appear early.
   function defaultRoots() {
     const roots = [];
     const g = deps.getPath || ((n) => { const h = os.homedir(); return { downloads: path.join(h, 'Downloads'), documents: path.join(h, 'Documents'), desktop: path.join(h, 'Desktop'), pictures: path.join(h, 'Pictures'), music: path.join(h, 'Music'), videos: path.join(h, 'Videos') }[n]; });
-    ['music', 'videos', 'downloads', 'desktop', 'documents'].forEach((n) => { try { const d = g(n); if (d) roots.push(d); } catch (e) { /* ignore */ } });
-    if (platform === 'win32') for (let c = 68; c <= 90; c++) {           // D: .. Z: root folders like D:\Movies
-      const dl = String.fromCharCode(c) + ':\\';
-      ROOT_GUESSES.forEach((n) => roots.push(dl + n));
-    }
-    return roots.concat(deps.mediaRoots || []);
+    ['videos', 'music', 'pictures', 'downloads', 'documents', 'desktop'].forEach((n) => { try { const d = g(n); if (d) roots.push(d); } catch (e) { /* ignore */ } });
+    (deps.mediaRoots || []).forEach((r) => roots.push(r));
+    if (platform === 'win32') for (let c = 67; c <= 90; c++) roots.push(String.fromCharCode(c) + ':\\');   // C:\ .. Z:\
+    else roots.push(os.homedir());
+    return roots;
   }
+  const MAX_FILES = 400000, MAX_DEPTH = 14;
   async function buildIndex() {
-    const out = [], seen = new Set(); let n = 0;
+    const out = [], seen = new Set(); let n = 0, tick = 0;
     const queue = defaultRoots().filter((r) => { try { return fs.statSync(r).isDirectory(); } catch (e) { return false; } }).map((r) => [r, 0]);
-    while (queue.length && n < 80000) {
+    while (queue.length && n < MAX_FILES) {
       const [dir, depth] = queue.shift();
-      if (seen.has(dir)) continue; seen.add(dir);
+      const key = dir.toLowerCase(); if (seen.has(key)) continue; seen.add(key);
       let items; try { items = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { continue; }
       for (const it of items) {
         const full = path.join(dir, it.name);
-        if (it.isDirectory()) { if (depth < 6 && !SKIP_DIRS.test(it.name) && !it.name.startsWith('.')) queue.push([full, depth + 1]); }
+        if (it.isDirectory()) { if (depth < MAX_DEPTH && !SKIP_DIRS.test(it.name) && !it.name.startsWith('.') && !it.isSymbolicLink()) queue.push([full, depth + 1]); }
         else if (it.isFile()) {
           const k = kindOf(it.name); if (!k) continue;
           let size = 0, mtime = 0; try { const st = await fs.promises.stat(full); size = st.size; mtime = st.mtimeMs; } catch (e) { /* ignore */ }
+          if (k === 'photo' && size > 0 && size < 20 * 1024) continue;      // skip tiny icons and thumbnails
           out.push({ p: full, key: nameKey(it.name), kind: k, size, mtime }); n++;
         }
       }
+      if (++tick % 40 === 0) await new Promise((r) => setImmediate(r));       // let the app breathe while indexing a big disk
     }
     return out;
   }
   async function getIndex(force) {
-    if (!force && index && Date.now() - indexAt < 300000) return index;
+    if (!force && index && Date.now() - indexAt < 600000) return index;
     if (!indexing) indexing = buildIndex().then((r) => { index = r; indexAt = Date.now(); indexing = null; return r; }, (e) => { indexing = null; throw e; });
     return indexing;
   }
@@ -182,11 +188,17 @@ function make(deps) {
     if (kind === 'music') return idx.filter((f) => f.kind === 'music');
     if (kind === 'movie') return idx.filter((f) => f.kind === 'video' && f.size >= MOVIE_MIN_BYTES);
     if (kind === 'video') return idx.filter((f) => f.kind === 'video');
+    if (kind === 'photo') return idx.filter((f) => f.kind === 'photo');
+    if (kind === 'doc') return idx.filter((f) => f.kind === 'doc');
     return idx;
   }
   function rank(idx, query, kind) {
     return pool(idx, kind).map((f) => ({ f, s: score(query, f.key) })).filter((x) => x.s >= 45).sort((a, b) => b.s - a.s || b.f.mtime - a.f.mtime);
   }
+  const KINDS = /^(music|video|movie|photo|doc)$/;
+  const NOUN = { music: 'song', movie: 'movie', video: 'video', photo: 'photo', doc: 'document', '': 'file' };
+  const PLURAL = { music: 'songs', movie: 'movies', video: 'videos', photo: 'photos', doc: 'documents', '': 'files' };
+  const LATEST = /^(?:\*latest|latest|newest|recent|last|most recent)$/i;
   const pretty = (f) => clip(path.basename(f.p, path.extname(f.p)).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim(), 70);
   async function openFile(f) {
     try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(f.p); return !e; } } catch (e) { /* fall back */ }
@@ -291,16 +303,21 @@ function make(deps) {
       return r.ok ? R(true, KEY_SAY[name]) : fail(r, 'The key press failed.');
     },
     async playfile(arg, arg2) {
-      const kind = /^(music|video|movie)$/.test(String(arg2 || '')) ? arg2 : '';
+      const kind = KINDS.test(String(arg2 || '')) ? String(arg2) : '';
       const name = String(arg || '').trim().slice(0, 120);
-      if (!name) return R(false, 'Tell me the name of the movie or song.');
-      const idx = await getIndex(false);
-      let hits = rank(idx, name, kind);
-      if (!hits.length && kind === 'movie') hits = rank(idx, name, 'video');
-      if (!hits.length) { const fresh = await getIndex(true); hits = rank(fresh, name, kind === 'movie' ? 'video' : kind); }
-      if (!hits.length) return R(false, 'I could not find ' + (kind === 'music' ? 'a song' : kind ? 'a ' + (kind === 'movie' ? 'movie' : 'video') : 'a file') + ' called ' + clip(name, 50) + ' on this PC.');
-      const best = hits[0].f;
-      return (await openFile(best)) ? R(true, 'Playing ' + pretty(best) + '.') : R(false, 'I found ' + pretty(best) + ' but could not open it.');
+      if (!name) return R(false, 'Tell me the name of the ' + NOUN[kind] + '.');
+      const verb = kind === 'photo' || kind === 'doc' || kind === '' ? 'Opening' : 'Playing';
+      let idx = await getIndex(false), best = null;
+      if (LATEST.test(name)) {                                        // "my latest photo", "the newest movie"
+        const l = pool(idx, kind).slice().sort((a, b) => b.mtime - a.mtime); best = l[0] || null;
+      } else {
+        let hits = rank(idx, name, kind);
+        if (!hits.length && kind === 'movie') hits = rank(idx, name, 'video');
+        if (!hits.length) { idx = await getIndex(true); hits = rank(idx, name, kind === 'movie' ? 'video' : kind); }   // maybe a brand-new file
+        best = hits.length ? hits[0].f : null;
+      }
+      if (!best) return R(false, 'I could not find ' + (LATEST.test(name) ? 'any ' + PLURAL[kind] : 'a ' + NOUN[kind] + ' called ' + clip(name, 50)) + ' on this PC.');
+      return (await openFile(best)) ? R(true, verb + ' ' + pretty(best) + '.') : R(false, 'I found ' + pretty(best) + ' but could not open it.');
     },
     async playrandom(arg) {
       const kind = /^(movie|video)/.test(String(arg || '')) ? 'movie' : 'music';
@@ -312,21 +329,30 @@ function make(deps) {
     async playany(arg) {
       const name = String(arg || '').trim().slice(0, 120);
       if (!name) return R(false, 'Tell me what to play.');
-      const hits = rank(await getIndex(false), name, '').filter((x) => x.s >= 60);
+      const hits = rank(await getIndex(false), name, '').filter((x) => x.s >= 60 && (x.f.kind === 'music' || x.f.kind === 'video'));
       if (hits.length && (await openFile(hits[0].f))) return R(true, 'Playing ' + pretty(hits[0].f) + ' from this PC.');
       return youtubePlay(name);
     },
     async ytplay(arg) { return youtubePlay(arg); },
     async medialist(arg, arg2) {
-      const kind = /^(music|video|movie)$/.test(String(arg2 || '')) ? arg2 : '';
+      const kind = KINDS.test(String(arg2 || '')) ? String(arg2) : '';
       const idx = await getIndex(false), q = String(arg || '').trim();
-      let list = q ? rank(idx, q, kind).map((x) => x.f) : pool(idx, kind).slice().sort((a, b) => b.mtime - a.mtime);
-      const noun = kind === 'music' ? 'songs' : kind === 'movie' ? 'movies' : kind === 'video' ? 'videos' : 'files';
-      if (!list.length) return R(true, 'I did not find any ' + noun + (q ? ' matching ' + clip(q, 40) : '') + ' on this PC.');
-      return R(true, 'I found ' + list.length + ' ' + noun + (q ? ' matching ' + clip(q, 40) : '') + '. ' + (q ? 'Best matches' : 'Newest') + ': ' + list.slice(0, 4).map(pretty).join('; ') + '.');
+      const list = q && !LATEST.test(q) ? rank(idx, q, kind).map((x) => x.f) : pool(idx, kind).slice().sort((a, b) => b.mtime - a.mtime);
+      const noun = PLURAL[kind];
+      if (!list.length) return R(true, 'I did not find any ' + noun + (q && !LATEST.test(q) ? ' matching ' + clip(q, 40) : '') + ' on this PC.');
+      const m = q && !LATEST.test(q);
+      return R(true, 'I found ' + list.length + ' ' + noun + (m ? ' matching ' + clip(q, 40) : '') + '. ' + (m ? 'Best matches' : 'Newest') + ': ' + list.slice(0, 4).map(pretty).join('; ') + '.');
     },
     async openfolder(arg) {
       const key = String(arg || '').toLowerCase();
+      const dm = /^drive:([a-z])$/.exec(key);
+      if (dm) {                                                          // "open D drive"
+        const root = dm[1].toUpperCase() + ':\\';
+        try { if (!fs.statSync(root).isDirectory()) throw new Error('x'); } catch (e) { return R(false, 'I cannot find drive ' + dm[1].toUpperCase() + ' on this PC.'); }
+        try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(root); return e ? R(false, 'I could not open drive ' + dm[1].toUpperCase() + '.') : R(true, 'Opened drive ' + dm[1].toUpperCase() + '.'); } } catch (e) { /* fall back */ }
+        const r = await ps('Start-Process -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: root });
+        return r.ok ? R(true, 'Opened drive ' + dm[1].toUpperCase() + '.') : fail(r, 'I could not open that drive.');
+      }
       if (key === 'recycle bin') { const r = await ps('Start-Process explorer.exe -ArgumentList "shell:RecycleBinFolder"'); return r.ok ? R(true, 'Opened the recycle bin.') : fail(r, 'I could not open the recycle bin.'); }
       const name = FOLDERS[key]; if (!name) return R(false, 'I do not know that folder.');
       const g = deps.getPath || ((n) => path.join(os.homedir(), n.charAt(0).toUpperCase() + n.slice(1)));

@@ -72,7 +72,8 @@
       "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), a composed, witty and extremely capable British AI assistant inspired by Tony Stark's Jarvis, running as a voice assistant on the user's Windows PC. Address the user as {name}. You were created by MD Humayun Rashid Suchock; if anyone asks who made, built or created you, say so proudly and briefly.\n" +
       "Your replies are spoken aloud: keep them short (one to three sentences unless asked for detail). Exception: when the user asks you to write something (letter, email, essay, story, code, notes), write the COMPLETE text from start to finish and never stop early or leave it unfinished, plain text only, no markdown, no emojis, no bullet lists. A touch of dry wit is welcome.\n" +
       "You can control the PC by adding action tags at the very end of your reply:\n" +
-      "[[open:APP NAME]] [[youtube:SEARCH TEXT]] [[search:QUERY]] [[navigate:PLACE]] [[timer:SECONDS or SECONDS|SHORT LABEL]] [[alarm:HH:MM 24-hour|SHORT TASK LABEL]] [[volume:up|down|mute|0-100]] [[media:play|pause|next|previous]] [[settings:wifi|bluetooth|display|sound|main]] [[type:TEXT to type into the focused window]] [[key:enter|tab|escape|copy|paste|save|new tab|close tab|refresh]] [[scroll:up|down]]\n" +
+      "[[open:APP NAME]] [[youtube:SEARCH TEXT]] [[search:QUERY]] [[navigate:PLACE]] [[timer:SECONDS or SECONDS|SHORT LABEL]] [[alarm:HH:MM 24-hour|SHORT TASK LABEL]] [[volume:up|down|mute|0-100]] [[media:play|pause|next|previous]] [[settings:wifi|bluetooth|display|sound|main]] [[type:TEXT to type into the focused window]] [[key:enter|tab|escape|copy|paste|save|new tab|close tab|refresh]] [[scroll:up|down]] [[playfile:NAME|movie or music]] [[playyt:SEARCH TEXT]] [[playany:NAME]]\n" +
+      "You CAN play movies and songs stored on this PC: [[playfile:NAME|movie]] or [[playfile:NAME|music]] finds the file by name and plays it; [[playyt:SEARCH TEXT]] plays the first YouTube result; [[playany:NAME]] tries the PC first, then YouTube. Never say you cannot access local files; use these tags instead.\n" +
       "Only add a tag when the user clearly asks for that action, say briefly what you are doing, and never claim an action happened without its tag. Calls and texts happen on the user's phone, not here. Reply in the language the user speaks.\n" +
       "Current date and time: {datetime}.";
   }
@@ -366,7 +367,7 @@
     return res;
   }
 
-  var RISKY = { call: 1, sms: 1, open: 1, type: 1, typein: 1, key: 1, tap: 1, swipe: 1, align: 1, playnth: 1, navigate: 1, settings: 1 };
+  var RISKY = { call: 1, sms: 1, open: 1, type: 1, typein: 1, key: 1, tap: 1, swipe: 1, playfile: 1, playyt: 1, playany: 1, align: 1, playnth: 1, navigate: 1, settings: 1 };
   function runTags(text, hold) {
     var block = null, bm = text.match(/<<<JARVIS_TEXT[ \t]*\r?\n?([\s\S]*?)\r?\n?[ \t]*JARVIS_TEXT>>>/);
     if (bm) { block = bm[1].replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, ''); text = text.replace(bm[0], ''); }
@@ -390,6 +391,9 @@
           if (block !== null) { r = doAction('type', block, ''); used = true; } else r = doAction('type', t.v); break;
         case 'key': case 'tap': case 'scroll': case 'playnth': case 'swipe': case 'align': r = doAction(t.k, t.v); break;
         case 'ytplay': r = doAction('youtube', t.v, 'play'); break;
+        case 'playfile': if (!PC) break; var pf = t.v.split('|'); r = doAction('playfile', pf[0], pf[1] || ''); break;
+        case 'playyt': if (!PC) break; r = doAction('ytplay', t.v); break;
+        case 'playany': if (!PC) break; r = doAction('playany', t.v); break;
         case 'typein':
           var q = t.v.split('|');
           if (block !== null) { r = doAction('type', block, q[0]); used = true; }
@@ -749,24 +753,27 @@
     if (/^(?:take (?:a )?|capture (?:a )?|grab (?:a )?)?screenshot$|^screen ?shot$/.test(t)) return act('screenshot');
     if (/^(?:show (?:the )?desktop|minimi[sz]e (?:all|everything))$/.test(t)) return act('key', 'home', '', true);
     // ---- PC movies / music / YouTube (handled by pc-extra-actions.js on the PC)
-    var KMAP = { movie: 'movie', film: 'movie', video: 'video', episode: 'video', show: 'video', series: 'video', song: 'music', music: 'music', track: 'music', audio: 'music', file: '' };
-    var PCLOC = '(?: (?:from|on|in|at) (?:my |the )?(?:pc|computer|laptop|local|hard ?drive|storage|files|downloads|desktop|d drive|c drive))?';
+    var KMAP = { movie: 'movie', film: 'movie', video: 'video', episode: 'video', show: 'video', series: 'video', song: 'music', music: 'music', track: 'music', audio: 'music', file: '', photo: 'photo', picture: 'photo', image: 'photo', pic: 'photo', document: 'doc', doc: 'doc', pdf: 'doc', spreadsheet: 'doc', presentation: 'doc', excel: 'doc', word: 'doc' };
+    var PCLOC = '(?: (?:from|on|in|at) (?:my |the )?(?:pc|computer|laptop|local|hard ?drive|storage|files|downloads|desktop|[a-z] drive|[a-z] disk))?';
     var yt1 = t.match(/^(?:open |go to |launch )?youtube(?: and| then)? (?:play|search(?: for)?|find|watch|put on)(?: me)?(?: the| a| some)? (.{2,100})$/) ||
               t.match(/^(?:play|watch|put on|search(?: for)?) (.{2,100}?) (?:on|in|from|at|using) youtube$/);
     if (yt1 && !/^(?:youtube|you tube)$/.test(yt1[1])) return act('ytplay', yt1[1]);
-    if ((m = t.match(new RegExp('^(?:play|watch|open|start|put on|run)(?: me)?(?: the| a| an| my| some)? (movie|film|video|episode|show|series|song|music|track|audio|file)(?: called| named| titled| with the name)? (.{2,100}?)' + PCLOC + '$'))) && !/^(?:player|app|apps|library|folder|random|any|some)\b|^(?:random|any|some)$|(?:folder|settings|app|player)$/.test(m[2]))
+    if ((m = t.match(new RegExp('^(?:play|watch|open|start|put on|run|show)(?: me)?(?: the| a| an| my| some)? (movie|film|video|episode|show|series|song|music|track|audio|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel|word)(?: called| named| titled| with the name)? (.{2,100}?)' + PCLOC + '$'))) && !/^(?:player|app|apps|library|folder|random|any|some)\b|^(?:random|any|some)$|(?:folder|settings|app|player)$/.test(m[2]))
       return act('playfile', m[2], KMAP[m[1]]);
-    if ((m = t.match(/^(?:play|watch|put on) (?:the |a |my )?(.{2,100}?) (movie|film|song|music video)$/)) && !/ on youtube$/.test(t) && !/^(?:random|any|some|good|new|old|latest|best)$/.test(m[1])) return act('playfile', m[1], KMAP[m[2].split(' ')[0]] || (m[2] === 'music video' ? 'video' : ''));
+    if ((m = t.match(/^(?:play|watch|put on|open|start|run|find|show me) (?:the |a |my )?(.{2,100}?) (movie|film|song|music video|video file|music file|video|song file|movie file|film file|audio file|audio|track|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel file|word file|pdf file|photo file|picture file|image file|document file)$/)) && !/ on youtube$/.test(t) && !/^(?:this|that|the|my|a|an|next|previous|prev|last|back|current|first|another)$/.test(m[1]) && !/^(?:random|any|some|good|new|old|latest|best)$/.test(m[1])) return act(/^(?:find|show me)$/.test(t.split(' ')[0]) || /^show me/.test(t) ? 'medialist' : 'playfile', m[1], m[2] === 'music video' ? 'video' : (KMAP[m[2].split(' ')[0]] || ''));
     if ((m = t.match(/^(?:play|put on|start|shuffle)(?: me)? (?:some |any |a random |random |my )?(?:random )?(music|songs?|movies?|films?)(?: at random| randomly| for me)?$|^shuffle (?:my )?(music|songs)$|^surprise me with (?:a |some )?(music|song|movie|film)$/)) && (remote || /random|some|any|shuffle|surprise|my/.test(t))) {
       var rk = (m[1] || m[2] || m[3]); return act('playrandom', /movie|film/.test(rk) ? 'movie' : 'music');
     }
-    if (remote && (m = t.match(/^(?:play|put on) (.{2,80})$/)) && !/^(?:music|songs?|video|videos|movies?|films?|playback|the music|the song|the video|the movie|it|that|this|something|again|youtube|spotify|netflix|vlc|chrome|[a-z]+ (?:app|player))$/.test(m[1]) && !/^(?:the )?(?:next|previous|last) /.test(m[1]))
+    if ((m = t.match(/^(?:play|put on) (.{2,80})$/)) && !/^(?:music|songs?|video|videos|movies?|films?|playback|the music|the song|the video|the movie|it|that|this|something|again|next|previous|prev|back|pause|resume|stop|youtube|spotify|netflix|vlc|chrome|[a-z]+ (?:app|player))$/.test(m[1]) && !/^(?:the )?(?:next|previous|last) /.test(m[1]))
       return act('playany', m[1]);
+    if ((m = t.match(/^(?:play|open|show|watch)(?: me)?(?: my| the)? (?:latest|newest|most recent|recent|last) (movie|film|video|song|music|photo|picture|image|document|pdf|file|download)s?(?: on (?:my )?(?:pc|computer))?$/)))
+      return act('playfile', 'latest', m[1] === 'download' ? '' : (KMAP[m[1]] || ''));
+    if ((m = t.match(/^open (?:my |the )?(?:(?:drive|disk) ([a-z])|([a-z]) (?:drive|disk))$/))) return act('openfolder', 'drive:' + (m[1] || m[2]));
     if ((m = t.match(/^(?:stop|close|quit|exit|kill|end)(?: the| my)? (?:movie|film|video|music|song|songs|player|media player|vlc|playback|playing)$|^(?:turn|switch) off (?:the )?(?:movie|film|music|song|video|player|media player)$/))) return act('stopmedia');
     if (/^(?:turn|switch) on (?:the )?(?:music|song|movie|film|video|player)$/.test(t)) return act('media', 'play');
-    if ((m = t.match(/^(?:find|search for|look for|do i have)(?: me)?(?: a| an| the| any)? (movie|film|song|music|video|episode|file)s? (?:called |named |about |with )?(.{2,80})$/)))
+    if ((m = t.match(/^(?:find|search for|look for|do i have)(?: me)?(?: a| an| the| any)? (movie|film|song|music|video|episode|file|photo|picture|image|document|pdf)s? (?:called |named |about |with )?(.{2,80})$/)))
       return act('medialist', m[2], KMAP[m[1]]);
-    if ((m = t.match(/^(?:list|show|what)(?: me)?(?: my| the| all)? (movies|films|songs|music|videos)(?: do i have| on (?:my )?(?:pc|computer))?$/)))
+    if ((m = t.match(/^(?:list|show|what)(?: me)?(?: my| the| all)? (movies|films|songs|music|videos|photos|pictures|images|documents|pdfs)(?: do i have| on (?:my )?(?:pc|computer))?$/)))
       return act('medialist', '', KMAP[m[1].replace(/s$/, '')] || (m[1] === 'music' ? 'music' : ''));
     if ((m = t.match(/^open (?:my |the )?(downloads|documents|desktop|pictures|photos|music|videos|movies|recycle bin)(?: folder)?$/)) && (remote || /folder$|recycle bin$/.test(t))) return act('openfolder', m[1]);
 
@@ -2542,7 +2549,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.21.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.22.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
