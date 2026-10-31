@@ -726,20 +726,20 @@
     linkWait[id] = function (d) { if (done) return; done = true; cb(d); };
     setTimeout(function () { if (!done) { done = true; delete linkWait[id]; cb({ ok: false, msg: 'No answer from your ' + (PC ? 'phone' : 'PC') + '.' }); } }, 30000);
   }
-  var POWER = { shutdown: 'shut down', restart: 'restart', sleep: 'put to sleep' };
+  var POWER = { shutdown: 'shut down', restart: 'restart', sleep: 'put to sleep', logoff: 'sign out of', emptybin: 'empty the recycle bin on' };
   function splitTarget(t) {
     var m, tg = null, rest = null;
     var DEV = '(pc|computer|laptop|desktop|windows pc|windows|phone|mobile phone|mobile|android phone|android)';
     if ((m = t.match(new RegExp('^(?:on|in|at|using) (?:my |the )?' + DEV + '[ ,:]+(.+)$')))) { tg = m[1]; rest = m[2]; }
     else if ((m = t.match(new RegExp('^(?:tell|ask|have|make|let|get) (?:my |the )?' + DEV + '(?: to)? (.+)$')))) { tg = m[1]; rest = m[2]; }
-    else if ((m = t.match(/^(lock|shut ?down|power off|turn off|restart|reboot|sleep|hibernate|cancel (?:the )?shutdown|cancel (?:the )?restart) (?:my |the )?(pc|computer|laptop|desktop)$/))) { tg = m[2]; rest = m[1]; }
+    else if ((m = t.match(/^(lock|shut ?down|power off|turn off|restart|reboot|sleep|hibernate|sign out of|sign out|log out of|log out|log off|cancel (?:the )?shutdown|cancel (?:the )?restart) (?:my |the )?(pc|computer|laptop|desktop)$/))) { tg = m[2]; rest = m[1]; }
     else if ((m = t.match(/^(?:take (?:a )?)?screenshot(?: of)? (?:my |the )?(pc|computer|laptop|desktop)$/))) { tg = m[1]; rest = 'screenshot'; }
     else if ((m = t.match(new RegExp('^(.+?) (?:on|in|from) (?:my |the )?' + DEV + '$')))) { tg = m[2]; rest = m[1]; }
     if (!tg) return null;
     return { target: /^(pc|computer|laptop|desktop|windows)/.test(tg) ? 'pc' : 'phone', rest: rest };
   }
   // commands that only exist on a PC
-  function pcIntent(t) {
+  function pcIntent(t, remote) {
     var m;
     if (/^(?:lock)(?: the| my)?(?: pc| computer| laptop| screen| workstation)?$/.test(t)) return act('lock', '', '', true);
     if (/^(?:go to sleep|sleep(?: mode)?|put (?:the |my )?(?:pc|computer|laptop) to sleep|hibernate)$/.test(t)) return act('sleep');
@@ -748,6 +748,43 @@
     if (/^(?:cancel|abort|stop) (?:the )?(?:shutdown|restart|reboot)$/.test(t)) return act('cancelshutdown', '', '', true);
     if (/^(?:take (?:a )?|capture (?:a )?|grab (?:a )?)?screenshot$|^screen ?shot$/.test(t)) return act('screenshot');
     if (/^(?:show (?:the )?desktop|minimi[sz]e (?:all|everything))$/.test(t)) return act('key', 'home', '', true);
+    // ---- more PC controls (handled by pc-extra-actions.js on the PC)
+    if (/^(?:pc|computer|system) (?:status|stats|health)$|^how(?:'s| is) (?:my |the )?(?:pc|computer)(?: doing)?$/.test(t) || (remote && /^(?:status|system status|diagnostics)$/.test(t))) return act('pcinfo', 'status', '', false);
+    if (/^(?:pc |computer )?(?:cpu|processor)(?: usage| load)?$/.test(t) && (remote || /^(?:pc|computer) /.test(t) || /usage|load/.test(t))) return act('pcinfo', 'cpu');
+    if (/^(?:pc |computer )?(?:ram|memory)(?: usage| left| free)?$/.test(t) && (remote || /^(?:pc|computer) /.test(t) || /usage|left|free/.test(t))) return act('pcinfo', 'memory');
+    if (/^(?:pc |computer )?(?:disk|storage|drive)(?: space| usage| left| free)?$/.test(t) && (remote || /^(?:pc|computer) /.test(t) || /space|usage|left|free/.test(t))) return act('pcinfo', 'disk');
+    if (/^(?:pc |computer )?uptime$|^how long (?:has|have) (?:my |the )?(?:pc|computer) been (?:on|running)$/.test(t)) return act('pcinfo', 'uptime');
+    if (/^(?:pc |computer )?(?:ip address|my ip)$/.test(t) && (remote || /^(?:pc|computer) /.test(t))) return act('pcinfo', 'ip');
+    if (/^(?:what(?:'s| is) |which apps? (?:is|are) )?running apps?$|^what(?:'s| is) running(?: on (?:my |the )?(?:pc|computer))?$|^(?:running|top) (?:apps|programs|processes)$/.test(t)) return act('pcinfo', 'apps');
+    if (remote && /^(?:battery(?: level| status| percentage)?|how much battery(?: is left)?)$/.test(t)) return act('pcinfo', 'battery');
+    if ((m = t.match(/^(?:set |change )?(?:the )?(?:screen )?brightness (?:to )?(\d{1,3})(?: ?%| percent)?$/))) return act('brightness', String(Math.max(0, Math.min(100, parseInt(m[1], 10)))));
+    if (/^(?:brightness (?:up|higher)|(?:increase|raise|turn up|boost) (?:the )?(?:screen )?brightness|brighter|more brightness)$/.test(t)) return act('brightness', 'up');
+    if (/^(?:brightness (?:down|lower)|(?:decrease|reduce|lower|turn down|dim) (?:the )?(?:screen )?(?:brightness)?|dimmer|less brightness)$/.test(t)) return act('brightness', 'down');
+    if ((m = t.match(/^(?:turn |switch |set )?(?:on |off )?dark mode(?: (on|off))?$|^(enable|disable|toggle) dark mode$|^(?:turn |switch )(on|off) (?:the )?dark mode$|^light mode$/))) {
+      var dm = /^light mode$/.test(t) ? 'off' : (m[1] || m[3] || (m[2] === 'enable' ? 'on' : m[2] === 'disable' ? 'off' : m[2] === 'toggle' ? 'toggle' : (/off dark mode/.test(t) ? 'off' : /on dark mode/.test(t) ? 'on' : 'toggle')));
+      return act('darkmode', dm);
+    }
+    if ((m = t.match(/^open (?:the )?(wi-?fi|bluetooth|display|sound|windows update|update|apps|battery|storage|network|privacy|personali[sz]ation|notifications|default apps|startup apps|about|power|night light|keyboard|mouse|printers?|time|language) settings$|^open settings (?:for )?(wi-?fi|bluetooth|display|sound|update|apps|battery|storage|network|privacy|notifications|power|about)$/))) {
+      var pg = (m[1] || m[2]).replace('wi-fi', 'wifi').replace('windows update', 'update').replace('personalisation', 'personalization');
+      return act('settingspage', pg);
+    }
+    if ((m = t.match(/^(?:copy|put|set) (.+?) (?:to|on|in|into) (?:the |my )?(?:pc |computer )?clipboard$/))) return act('clipset', fmtDictation(m[1]));
+    if (/^(?:read|show|what(?:'s| is)(?: on| in)?|get) (?:the |my )?(?:pc |computer )?clipboard$|^what(?:'s| is) (?:on|in) (?:the |my )?(?:pc |computer )?clipboard$/.test(t)) return act('clipget');
+    if (remote && /^(?:alt tab|switch (?:the )?window|next window)$/.test(t)) return act('pckey', 'switchwindow');
+    if (remote && /^(?:close (?:the )?(?:current |this |active )?window|close window)$/.test(t)) return act('pckey', 'closewindow');
+    if (remote && /^(?:maximi[sz]e(?: the)?(?: current| this| active)?(?: window)?)$/.test(t)) return act('pckey', 'maxwindow');
+    if (remote && /^(?:minimi[sz]e(?: the)?(?: current| this| active)? window|minimi[sz]e)$/.test(t)) return act('pckey', 'minwindow');
+    if (remote && /^(?:snap|move) (?:the )?(?:window )?(left|right)$/.test(t)) return act('pckey', 'snap' + t.match(/(left|right)$/)[1]);
+    if (remote && /^(?:new tab|open (?:a )?new tab)$/.test(t)) return act('pckey', 'newtab');
+    if (remote && /^(?:close (?:the )?(?:current |this )?tab)$/.test(t)) return act('pckey', 'closetab');
+    if (remote && /^(?:next tab|switch to (?:the )?next tab)$/.test(t)) return act('pckey', 'nexttab');
+    if (remote && /^(?:previous tab|last tab|switch to (?:the )?previous tab)$/.test(t)) return act('pckey', 'prevtab');
+    if (remote && /^(?:refresh|reload)(?: the)?(?: page)?$/.test(t)) return act('pckey', 'refresh');
+    if (remote && /^(?:full ?screen|go full ?screen|exit full ?screen)$/.test(t)) return act('pckey', 'fullscreen');
+    if (remote && /^scroll (up|down)$/.test(t)) return act('pckey', 'scroll' + t.match(/(up|down)$/)[1]);
+    if (remote && /^(?:task view|show all windows|show (?:all )?open windows)$/.test(t)) return act('pckey', 'taskview');
+    if (/^(?:sign out|log ?out|log off)(?: of)?(?: the| my)?(?: pc| computer| laptop| windows)?$/.test(t)) return act('logoff');
+    if (/^(?:empty|clear) (?:the )?(?:recycle bin|trash)$/.test(t)) return act('emptybin');
     if ((m = t.match(/^(?:close|quit|exit|kill) (?:the )?(.+?)(?: app| window| program)?$/)) && !/^(?:chat|settings|panel|menu|this|that|it|jarvis|routines?|conversation|window|tab)$/.test(m[1]))
       return act('close', m[1]);
     return null;
@@ -756,7 +793,7 @@
     if (rt.target === SELF) return localIntent(rt.rest);
     rt.rest = rt.rest.replace(/^(?:play|skip to|go to) (?:the )?(next|previous|last) (?:song|track)$/, function (_, w) { return (w === 'last' ? 'previous' : w) + ' song'; })
       .replace(/^(?:pause|stop|resume) (?:the )?(?:music|song|video|playback)$/, function (x) { return /^resume/.test(x) ? 'play' : 'pause'; });
-    var inner = (rt.target === 'pc' && pcIntent(rt.rest)) || localIntent(rt.rest);
+    var inner = (rt.target === 'pc' && pcIntent(rt.rest, true)) || localIntent(rt.rest);
     if (inner && inner.kind === 'action') return { kind: 'remote', target: rt.target, type: inner.type, arg: inner.arg, arg2: inner.arg2, quiet: inner.quiet };
     return { kind: 'reply', text: 'I can relay commands such as opening apps, volume, media, timers and typing to your ' + (rt.target === 'pc' ? 'PC' : 'phone') + ', ' + addrName() + ', but not that one.' };
   }
@@ -777,6 +814,36 @@
       if (r.ok) respond(pick(LEADS) + ', ' + addrName() + '. ' + (r.msg || 'Done on your ' + nm + '.'));
       else respondError(r.msg || 'That failed on your ' + nm + '.', r.msg);
     });
+  }
+
+  /* ---- scrolling feeds, reels and shorts by voice ------------------------------------------------------------
+     "scroll down" = show what is below (finger swipes up). Also: next/previous reel, counts ("3 times"), sizes
+     ("a little", "a lot"), "scroll to the top", "stop scrolling". Speech recognisers often hear "scroll" as
+     "scrolled", "stroll" or "school", so those are accepted too. These replies are not spoken (quiet + mute). */
+  var NUMW = { a: 1, one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  function feedCount(x) { var n = NUMW[x] || parseInt(x, 10); return n >= 1 ? Math.min(10, n) : 1; }
+  function feed(dir, cnt, size) { var a = act('scroll', dir, (cnt > 1 ? String(cnt) : '') + (size ? (cnt > 1 ? ',' : '') + size : ''), true); a.mute = true; return a; }
+  function reel(dir, cnt) { var a = act('swipe', dir, cnt > 1 ? String(cnt) : '', true); a.mute = true; return a; }
+  function feedIntent(t) {
+    var m, SC = '(?:scroll(?:ed|ing|s)?|stroll|scrawl|school|scrol)', IT = '(?: it| that| this| the page| the screen| the feed| the list| the reels?)?';
+    var CNT = '(?: (\\d{1,2}|a|one|once|two|twice|three|four|five|six|seven|eight|nine|ten)(?: times?| more times?| posts?| reels?| videos?| screens?)?)?';
+    if (/^(?:stop|cancel|end) (?:the )?(?:auto )?(?:scroll(?:ing)?|swiping)$/.test(t)) { var st = act('scroll', 'stop', '', true); st.mute = true; return st; }
+    if ((m = t.match(new RegExp('^' + SC + IT + ' (?:all the way )?(?:to )?(?:the )?(top|bottom|start|end|beginning)$')))) return feed(/top|start|beginning/.test(m[1]) ? 'top' : 'bottom', 1, '');
+    if ((m = t.match(new RegExp('^' + SC + IT + ' (up|down)(?: (a (?:little|bit|tiny bit)|slowly|slightly)| (a lot|far|fast|quickly|more|again)| (?:one )?page)?' + CNT + '$')))) {
+      var size = m[2] ? 'small' : (m[3] && /lot|far|fast|quickly/.test(m[3]) ? 'big' : ''), n = m[4] ? feedCount(m[4]) : 1;
+      if (/ page$/.test(t) && !m[4]) size = 'big';
+      return feed(m[1], n, size);
+    }
+    if ((m = t.match(/^(?:page|go|move|swipe) (up|down)(?: (a (?:little|bit)|a lot))?$|^(up|down) (?:a )?page$/)) && !/^swipe (?:up|down)$/.test(t))
+      return feed(m[1] || m[3], 1, /^page|page$/.test(t) ? 'big' : (m[2] && /little|bit/.test(m[2]) ? 'small' : (m[2] ? 'big' : '')));
+    // reels / shorts / posts: one swipe each
+    if ((m = t.match(/^(?:go to |play |show |watch |open )?(?:the )?(next|another|new|following) (?:one|short|shorts|reel|reels|post|clip|story|video in (?:the )?feed|tiktok)$/)) || /^(?:skip|swipe|next)(?: this| the current)? (?:one|short|reel|post|clip)$|^swipe up$|^skip(?: it)?$/.test(t) && !/^skip$/.test(t))
+      return reel('up', 1);
+    if ((m = t.match(/^(?:swipe up|next reel|next one) (\d{1,2}|two|three|four|five|six|seven|eight|nine|ten) times?$|^skip (\d{1,2}|two|three|four|five|six|seven|eight|nine|ten) (?:reels?|shorts?|posts?|videos?|clips?)$/)))
+      return reel('up', feedCount(m[1] || m[2]));
+    if (/^(?:go back to |play |show |watch |open )?(?:the )?(?:previous|last|earlier|prior) (?:one|short|shorts|reel|reels|post|clip|story)$|^swipe down$|^go back one$/.test(t))
+      return reel('down', 1);
+    return null;
   }
 
   function localIntent(raw) {
@@ -953,8 +1020,7 @@
       return act('playnth', String(ORD[m[1]]));
     if ((m = t.match(/^(?:play|open|start|watch|select) (?:video|result|number) (\d)$/))) return act('playnth', m[1]);
     if (/^(?:play|start|watch) (?:the |that )?(?:video|result|top result|top video)$/.test(t)) return act('playnth', '1');
-    if (/^(?:next|another) (?:short|reel|video in feed)$|^swipe up$|^next reel$/.test(t)) return act('swipe', 'up');
-    if (/^(?:previous|last|go back to the previous) (?:short|reel)$|^swipe down$|^previous reel$/.test(t)) return act('swipe', 'down');
+    var fd = feedIntent(t); if (fd) return fd;
     if (/^swipe (left|right)$/.test(t)) return act('swipe', t.split(' ')[1]);
     if (/^(?:like|subscribe)(?: (?:to )?(?:this |the )?(?:video|channel|short))?$/.test(t)) return act('tap', t.split(' ')[0]);
     if (/^skip (?:the )?ads?$/.test(t)) return act('tap', 'skip');
@@ -966,7 +1032,6 @@
     if (/^(?:open |pull down )?(?:the )?quick settings$/.test(t)) return act('key', 'quicksettings');
     if (/^(?:clear|erase|delete) (?:the )?(?:text|field|text ?box|what you typed)$/.test(t)) return act('key', 'clear');
     if (/^(?:new line|next line|press enter|enter)$/.test(t)) return act('key', 'enter');
-    if ((m = t.match(/^scroll (up|down)$/))) return act('scroll', m[1]);
     if ((m = t.match(/^(?:tap|click|press|hit) (?:on )?(?:the )?(.{2,40}?)(?: button)?$/)) && !/^(?:back|home|enter)$/.test(m[1]))
       return act('tap', m[1]);
 
@@ -1198,6 +1263,7 @@
     }
     if (needsConfirm(li)) { askConfirm(confirmQuestion(li), function () { li.confirmed = true; runLocal(li, userText); }); return; }
     var r = doAction(li.type, li.arg, li.arg2);
+    if (li.mute && r.ok) { addMsg('act', (li.type === 'swipe' ? '\u21d5 ' : '\u2195 ') + (li.arg || li.type) + (li.arg2 ? ' ' + li.arg2 : ''), true); setState('idle'); setTimeout(afterReply, 120); return; }
     if (!r.ok && li.type === 'open' && /\.[a-z]{2,}$/.test(li.arg)) r = doAction('url', li.arg);
     var reply;
     if (r.ok) reply = li.quiet ? r.msg : pick(LEADS) + ', ' + addrName() + '. ' + r.msg;
@@ -1357,7 +1423,7 @@
     ['NOTES & MATH', [['Remember…', 'remember '], ['Show my notes', 'show my notes', 1], ['Delete note 1', 'delete note 1'], ['15% of 240', 'what is 15% of 240', 1], ['Good morning', 'good morning', 1]]],
     ['ROUTINES', [['My routines', 'my routines', 1], ['Leaving home', 'leaving home', 1], ['I am home', 'i am home', 1]]],
     ['MEMORY & SAFETY', [['Remember…', 'remember my '], ['What do you remember', 'what do you remember', 1], ['Forget…', 'forget my '], ['Offline mode', 'offline mode', 1]]],
-    ['TYPE & CONTROL', [['Write an email', 'write an email in notepad'], ['Scroll down', 'scroll down'], ['Tap Send', 'tap send'], ['Go back', 'go back'], ['Clear the text', 'clear the text']]],
+    ['TYPE & CONTROL', [['Write an email', 'write an email in notepad'], ['Scroll down', 'scroll down'], ['Next reel', 'next reel'], ['Previous reel', 'previous reel'], ['Tap Send', 'tap send'], ['Go back', 'go back'], ['Clear the text', 'clear the text']]],
     ['MEDIA & YOUTUBE', [['Play lofi', 'play lofi music on youtube'], ['Pause', 'pause'], ['Next song', 'next song'], ['Skip ad', 'skip ad']]],
     ['INFO & FUN', [['Weather', 'weather in dhaka'], ['Tell me a joke', 'tell me a joke', 1], ['Fun fact', 'tell me a fact', 1], ['Flip a coin', 'flip a coin', 1], ['Motivate me', 'motivate me', 1]]],
     ['SYSTEM & GRAPHS', [['System monitor', 'system monitor', 1], ['Storage', 'how much storage do i have', 1], ['Memory', 'how much memory is used', 1], ['Network', 'network status', 1], ['Battery temp', 'battery temperature', 1], ['Top news', 'top news', 1], ['Uptime', 'uptime', 1], ['Usage report', 'usage report', 1]]],
@@ -2107,7 +2173,7 @@
       var qh = el('div', 'dl-note', 'Quick controls for your ' + OTHER + ':'); box.appendChild(qh);
       var quick = PC
         ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off']]
-        : [['LOCK PC', 'lock', ''], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['SCREENSHOT', 'screenshot', '']];
+        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
       var qr = el('div', 'row'); qr.style.cssText = 'margin:0 0 10px;flex-wrap:wrap';
       quick.forEach(function (q) { qr.appendChild(btn(q[0], '', function () { linkSend(q[1], q[2], '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), 3200); }); })); });
       box.appendChild(qr);
@@ -2345,7 +2411,7 @@
       ['1 · First start', '<p>Open Jarvis and tap the screen once after the boot animation. When Android asks for permissions, tap <b>Allow</b> for the <b>microphone</b> (so Jarvis can hear you) and, if you want Jarvis to call people, <b>phone</b> and <b>contacts</b>. You can change these later in <b>Settings › Phone Access</b>.</p>'],
       ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › Neural Link</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next automatically.</p>'],
       ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p>'],
-      ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p>'],
+      ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
       ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen.</p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
       ['7 · Quick tile', '<ul><li><b>Quick tile:</b> pull down the notification shade, tap the pencil or edit icon and drag the <b>Jarvis</b> tile into your quick settings. Tap it to start talking.</li></ul>'],
@@ -2454,7 +2520,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.19.4' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.20.1' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }

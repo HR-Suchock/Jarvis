@@ -1,0 +1,19 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "jarvis": {
+      "$room": {
+        ".read": true,
+        ".write": true,
+        "inbox": {
+          "$box": {
+            "$msg": {
+              ".validate": "newData.hasChildren(['v', 'n', 'c']) && newData.child('c').val().length < 20000"
+            }
+          }
+        }
+      }
+    }
+  }
+}

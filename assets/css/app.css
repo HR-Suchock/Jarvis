@@ -434,4 +434,4 @@ body::after{content:'';position:fixed;inset:0;z-index:5;pointer-events:none;
 .sec textarea.dl-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.35;word-break:break-all;resize:none;min-height:110px}
 pre.rules{margin:8px 0;padding:12px 14px;background:rgba(var(--cyrgb),.05);border:1px solid var(--line2);color:var(--cyhi);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.4;overflow-x:auto;white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text;max-width:100%;box-sizing:border-box}
 details.man .manb code{color:var(--cyhi);font-size:13px;word-break:break-all}
-details.man .manb .btn.mini,.btn.mini{min-height:34px;padding:6px 12px;font-size:13px;margin:4px 0}
+details.man .manb .btn.sm,.btn.sm{display:inline-block;min-height:38px;padding:7px 14px;font-size:14px;margin:6px 0;opacity:1;pointer-events:auto}

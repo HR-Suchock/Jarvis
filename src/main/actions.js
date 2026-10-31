@@ -240,7 +240,19 @@ function createActions(deps) {
     ps(psSendKeys, k);
     return res(true, 'Pressed ' + a + '.');
   }
-  function scroll(arg) { return key(esc(arg).toLowerCase() === 'up' ? 'page up' : 'page down'); }
+  function scroll(arg, arg2) {
+    const a = esc(arg).toLowerCase().trim();
+    if (a === 'stop') return res(true, 'Okay.');
+    if (!win) return res(false, 'Keyboard control works on Windows.');
+    if (a === 'top' || a === 'bottom') { ps(psSendKeys, a === 'top' ? '^{HOME}' : '^{END}'); return res(true, 'Scrolled to the ' + a + '.'); }
+    if (a !== 'up' && a !== 'down') return res(false, 'Say scroll up or scroll down.');
+    const m = esc(arg2).toLowerCase().match(/^(?:(\d{1,2}),?)?(small|big)?$/);
+    const n = Math.max(1, Math.min(10, m && m[1] ? parseInt(m[1], 10) : 1));
+    const size = m && m[2];
+    const unit = size === 'small' ? (a === 'up' ? '{UP}' : '{DOWN}').repeat(4) : (a === 'up' ? '{PGUP}' : '{PGDN}').repeat(size === 'big' ? 2 : 1);
+    ps(psSendKeys, unit.repeat(n));
+    return res(true, 'Scrolled ' + a + '.');
+  }
   function typeText(text, app) {
     if (!win) return res(false, 'Typing into apps works on Windows.');
     text = esc(text);
@@ -336,7 +348,7 @@ function createActions(deps) {
         case 'volume': return volume(arg);
         case 'media': return media(arg);
         case 'key': return key(arg);
-        case 'scroll': return scroll(arg);
+        case 'scroll': return scroll(arg, arg2);
         case 'type': return typeText(arg, arg2);
         case 'timer': return timer(arg);
         case 'alarm': return alarm(arg);

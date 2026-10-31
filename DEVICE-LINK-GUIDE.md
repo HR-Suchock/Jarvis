@@ -59,6 +59,8 @@ The two apps talk through a small free **Firebase Realtime Database** that you o
 > Do not use Firebase "test mode" rules — they expire and are wide open. Use the rules above.
 > Keep both devices' clocks on **automatic time** (messages older than 2 minutes are rejected, which also blocks replays).
 
+> The same rules are in `firebase-rules.json`, and in the app under **Settings › User Manual › 11** and **Settings › Device Link** with a **COPY RULES** button.
+
 ## 5. Using it
 From the phone (or typing/speaking on the PC):
 
@@ -79,6 +81,21 @@ On the PC itself you can also just say/type "open notepad", "volume up", "lock",
 
 Phone → PC: keep Jarvis running on the PC; closing the window sends it to the tray (switch on *Start with Windows* to have it ready after every boot).
 PC → phone: the phone runs a small "linked" notification service; on Android 10+ opening apps from the background works once Jarvis has **Display over other apps** (the same permission as the floating ball). Typing/tapping from the PC needs the accessibility service as before.
+
+### More PC commands (v1.20.0 — needs the updated PC app)
+Say these from the phone with "on my PC …" (or just say/type them on the PC where it makes sense):
+
+| Say | What happens | Switch needed on the PC |
+|---|---|---|
+| "on my PC status" · "cpu usage" · "ram" · "disk space" · "uptime" · "battery" · "ip address" · "what is running" | PC reads the answer back to your phone | remote control |
+| "on my PC brightness 40" · "brightness up" · "dim the brightness" | laptop screen brightness | remote control |
+| "on my PC turn on dark mode" · "toggle dark mode" · "light mode" | Windows theme | remote control |
+| "on my PC open wifi settings" (bluetooth, display, sound, update, apps, battery, storage, network, privacy, personalization, notifications, power, about…) | opens that Windows Settings page | remote control |
+| "on my PC copy hello there to clipboard" · "read the clipboard" | write / read the PC clipboard | typing and key presses |
+| "on my PC switch window" · "close window" · "maximise" · "minimise" · "snap left/right" · "task view" · "new tab" · "close tab" · "next/previous tab" · "refresh" · "full screen" · "scroll up/down" | window and browser keys | typing and key presses |
+| "sign out of my PC" · "on my PC empty the recycle bin" | asks yes/no on the phone first | power commands |
+
+The phone app also has quick buttons for PC STATUS, BRIGHT +/−, DARK MODE in Settings › Device Link.
 
 ## Safety notes
 * Hostile web text can't trigger shutdown/restart/sleep/close — those only come from your own spoken/typed command (or the quick-control buttons), never from the AI's action tags.

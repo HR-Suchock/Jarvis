@@ -6,7 +6,6 @@
   var P = window.jarvisPC;
   if (!P) return;
   window.JARVIS_PLATFORM = 'pc';
-  document.documentElement.classList.add('pc');      // enables the wide desktop layout in app.css
 
   var queue = [];
   function emit(ev, d) {

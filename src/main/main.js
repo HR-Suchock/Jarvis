@@ -11,6 +11,8 @@ const { transcribe } = require('./stt');
 const { createActions, TIER } = require('./actions');
 const { Relay } = require('./relay');
 const proto = require('./link-protocol');
+const extra = require('./pc-extra-actions')({ clipboard, shell });
+const TIERS = Object.assign({}, TIER, extra.TIER);
 
 const APP_URL = 'jarvis://app/';
 const RENDERER = path.join(__dirname, '..', '..', 'renderer');
@@ -48,6 +50,21 @@ function applyLink() {
   makeTray();
 }
 
+
+// The page asks for actions synchronously (like the Android bridge), but the extra actions are asynchronous.
+// For commands typed/spoken on this PC they run in a short-lived helper process that returns the real reply.
+function runExtraSync(type, arg, arg2) {
+  try {
+    const code = "const m=require(process.env.JARVIS_MOD)({});m.run(process.env.JARVIS_T,process.env.JARVIS_A,process.env.JARVIS_B).then(r=>{process.stdout.write(JSON.stringify(r));process.exit(0)})";
+    const r = require('child_process').spawnSync(process.execPath, ['-e', code], {
+      env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1', JARVIS_MOD: path.join(__dirname, 'pc-extra-actions.js'), JARVIS_T: type, JARVIS_A: arg, JARVIS_B: arg2 }),
+      encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 1 << 20,
+    });
+    const o = JSON.parse(String(r.stdout || '').trim());
+    return o && typeof o.msg === 'string' ? { ok: !!o.ok, msg: o.msg } : { ok: false, msg: 'That did not work.' };
+  } catch (e) { return { ok: false, msg: 'That did not work.' }; }
+}
+
 const recent = [];
 async function onRemote(cmd) {
   const c = linkCfg();
@@ -55,14 +72,14 @@ async function onRemote(cmd) {
   while (recent.length && now - recent[0] > 60000) recent.shift();
   if (recent.length >= 30) return { ok: false, msg: 'Too many commands in a minute — slow down.' };
   recent.push(now);
-  const tier = TIER[cmd.type];
+  const tier = TIERS[cmd.type];
   if (!tier) return { ok: false, msg: 'I cannot do “' + cmd.type.slice(0, 30) + '” on the PC.' };
   if (!c.enabled) return { ok: false, msg: 'The device link is switched off on the PC.' };
   if (tier === 'ctl' && !c.ctl) return { ok: false, msg: 'Remote control is switched off on the PC. Turn it on in Settings → Device Link.' };
   if (tier === 'input' && !c.input) return { ok: false, msg: 'Typing and keyboard control from the phone is switched off on the PC. Turn it on in Settings → Device Link.' };
   if (tier === 'danger' && !c.danger) return { ok: false, msg: 'Power commands from the phone are switched off on the PC. Turn them on in Settings → Device Link.' };
   if (tier !== 'ctl') notify('Jarvis — command from your phone', cmd.type + (cmd.arg ? ': ' + cmd.arg.slice(0, 80) : ''));
-  const r = actions.run(cmd.type, cmd.arg, cmd.arg2);
+  const r = extra.handles(cmd.type) ? await extra.run(cmd.type, cmd.arg, cmd.arg2) : actions.run(cmd.type, cmd.arg, cmd.arg2);
   emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
   return r;
 }
@@ -134,7 +151,10 @@ function wireIpc() {
   on('pref:get', (e, k) => { e.returnValue = typeof k === 'string' && k.length <= 64 ? store.get('pref.' + k) : ''; });
   on('pref:set', (e, k, v) => { if (typeof k === 'string' && k.length <= 64 && typeof v === 'string') store.set('pref.' + k, v); e.returnValue = ''; });
   on('wipe', (e) => { const keep = store.get('sys.link'); store.clear(); if (keep) store.set('sys.link', keep); e.returnValue = ''; });
-  on('action', (e, t, a, b) => { e.returnValue = JSON.stringify(actions.run(String(t), String(a == null ? '' : a), String(b == null ? '' : b))); });
+  on('action', (e, t, a, b) => {
+    t = String(t); a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+    e.returnValue = JSON.stringify(extra.handles(t) ? runExtraSync(t, a, b) : actions.run(t, a, b));
+  });
   on('sysinfo', (e) => {
     const total = os.totalmem(), free = os.freemem();
     const o = { ramPct: Math.round(100 - free * 100 / total), ramUsedMB: Math.round((total - free) / 1048576), ramTotalMB: Math.round(total / 1048576), uptimeMin: Math.floor(os.uptime() / 60) };
