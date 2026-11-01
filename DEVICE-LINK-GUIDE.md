@@ -111,6 +111,8 @@ The phone app also has quick buttons for PC STATUS, BRIGHT +/−, DARK MODE in S
 | "on my PC find movie Inception" · "list my movies" · "show my songs" | tells you how many it found and the best names | remote control |
 | "on my PC open downloads" · "open music folder" · "open the recycle bin" | opens the folder on the PC | remote control |
 
+**Folder hints (v1.22.1):** "on my PC play Iron Man movie from the Marvel Studios folder in F drive" — the folder name narrows the search (the drive name is not needed: every drive is searched). Saying just "open Marvel Studios file" opens that folder. Indexing no longer reads every file's size/date, so it is much lighter on big drives.
+
 **Photos, documents and drives (v1.22.0).** The PC now searches **every drive (C: to Z:)** — your whole PC, not just a few folders:
 
 | Say | What happens |

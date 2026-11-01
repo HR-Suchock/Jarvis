@@ -132,6 +132,7 @@ class Relay extends EventEmitter {
       let r;
       try { r = await this.onCommand({ type: String(m.type || ''), arg: String(m.arg || ''), arg2: String(m.arg2 || '') }); }
       catch (e) { r = { ok: false, msg: 'That failed: ' + (e && e.message ? e.message : e) }; }
+      if (m.nr === true) return;                      // fire-and-forget (touchpad moves): no reply, halves the traffic
       await this._post(ctx, this.peer, { k: 'res', re: m.id, ok: !!(r && r.ok), msg: String((r && r.msg) || '').slice(0, 500) });
     }
   }

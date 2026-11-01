@@ -27,6 +27,10 @@ const cp = require('child_process');
 const TIER = {
   pcinfo: 'ctl', brightness: 'ctl', darkmode: 'ctl', settingspage: 'ctl',
   clipset: 'input', clipget: 'input', pckey: 'input',
+  // v1.23.0
+  pclink: 'ctl', wolsetup: 'ctl',
+  // v1.24.0
+  jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input',
   logoff: 'danger', emptybin: 'danger',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
@@ -79,21 +83,27 @@ const FOLDERS = { downloads: 'downloads', documents: 'documents', desktop: 'desk
 function norm(x) { return String(x || '').toLowerCase().replace(/[\u2018\u2019']/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9\u0980-\u09ff\u0900-\u097f]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 const NOISE = /\b(?:1080p|720p|480p|2160p|4k|x264|x265|h264|h265|hevc|bluray|brrip|webrip|web dl|webdl|hdrip|dvdrip|aac|ac3|yify|yts|rarbg|official|video|audio|lyrics|lyric|hd|mp3)\b/g;
 function nameKey(file) { return norm(path.basename(file, path.extname(file))).replace(NOISE, ' ').replace(/\s+/g, ' ').trim(); }
+function ctxKey(dir) { const parts = String(dir).split(/[\\/]+/).filter(Boolean); return norm(parts.slice(-2).join(' ')); }
 function kindOf(file) { const e = path.extname(file).toLowerCase(); return EXT.music.indexOf(e) >= 0 ? 'music' : EXT.video.indexOf(e) >= 0 ? 'video' : EXT.photo.indexOf(e) >= 0 ? 'photo' : EXT.doc.indexOf(e) >= 0 ? 'doc' : null; }
 
 /** Scores how well a file name matches the spoken words. 0 = no match. */
-function score(query, key) {
+function score(query, key, ctx) {
   const q = norm(query).replace(NOISE, ' ').replace(/\s+/g, ' ').trim();
   if (!q || !key) return 0;
   if (q === key) return 100;
   const qt = q.split(' '), kt = key.split(' '), qc = q.replace(/ /g, ''), kc = key.replace(/ /g, '');
+  const ct = ctx ? String(ctx).split(' ') : [];
   let hit = 0;
-  for (const t of qt) { if (kt.some((k) => k === t || (t.length >= 3 && (k.startsWith(t) || t.startsWith(k) && k.length >= 3)))) hit++; else if (t.length >= 4 && kc.indexOf(t) >= 0) hit++; }
+  for (const t of qt) {
+    if (kt.some((k) => k === t || (t.length >= 3 && (k.startsWith(t) || t.startsWith(k) && k.length >= 3)))) hit++;
+    else if (t.length >= 4 && kc.indexOf(t) >= 0) hit++;
+    else if (ct.length && t.length >= 3 && ct.some((c) => c === t || c.startsWith(t))) hit += 0.85;   // word is in the folder name, e.g. "marvel studios"
+  }
   let sc = (hit / qt.length) * 60;
   if (kc.indexOf(qc) >= 0) sc += 30;                 // whole phrase inside the name ("spider man" ~ "spiderman")
   if (key.startsWith(q)) sc += 8;
   sc -= Math.min(10, Math.max(0, kt.length - qt.length) * 0.8);   // prefer the tighter name
-  return hit === qt.length || kc.indexOf(qc) >= 0 ? sc : sc * 0.5;
+  return hit >= qt.length - 0.01 || kc.indexOf(qc) >= 0 ? sc : sc * 0.5;
 }
 
 function make(deps) {
@@ -130,6 +140,11 @@ function make(deps) {
     const out = []; const ifs = os.networkInterfaces();
     Object.keys(ifs).forEach((n) => (ifs[n] || []).forEach((a) => { if (a.family === 'IPv4' && !a.internal) out.push(a.address); }));
     return out.length ? out.slice(0, 2).join(' and ') : 'no network address';
+  }
+  function macLine() {
+    const ifs = os.networkInterfaces(); let best = '';
+    Object.keys(ifs).forEach((n) => (ifs[n] || []).forEach((a) => { if (!best && a.family === 'IPv4' && !a.internal && a.mac && a.mac !== '00:00:00:00:00:00') best = a.mac.toUpperCase(); }));
+    return best;
   }
   async function diskLine() {
     const r = await ps("Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null } | ForEach-Object { '{0}: {1} GB free of {2} GB' -f $_.Name, [math]::Round($_.Free/1GB), [math]::Round(($_.Used+$_.Free)/1GB) }");
@@ -170,12 +185,11 @@ function make(deps) {
         if (it.isDirectory()) { if (depth < MAX_DEPTH && !SKIP_DIRS.test(it.name) && !it.name.startsWith('.') && !it.isSymbolicLink()) queue.push([full, depth + 1]); }
         else if (it.isFile()) {
           const k = kindOf(it.name); if (!k) continue;
-          let size = 0, mtime = 0; try { const st = await fs.promises.stat(full); size = st.size; mtime = st.mtimeMs; } catch (e) { /* ignore */ }
-          if (k === 'photo' && size > 0 && size < 20 * 1024) continue;      // skip tiny icons and thumbnails
-          out.push({ p: full, key: nameKey(it.name), kind: k, size, mtime }); n++;
+          // no stat() here: reading size/date for every file of a big disk is what made the app lag. It is done lazily for the few best matches.
+          out.push({ p: full, key: nameKey(it.name), ctx: ctxKey(dir), kind: k, size: -1, mtime: -1 }); n++;
         }
       }
-      if (++tick % 40 === 0) await new Promise((r) => setImmediate(r));       // let the app breathe while indexing a big disk
+      if (++tick % 8 === 0) await new Promise((r) => setImmediate(r));       // let the app breathe while indexing a big disk
     }
     return out;
   }
@@ -186,14 +200,39 @@ function make(deps) {
   }
   function pool(idx, kind) {
     if (kind === 'music') return idx.filter((f) => f.kind === 'music');
-    if (kind === 'movie') return idx.filter((f) => f.kind === 'video' && f.size >= MOVIE_MIN_BYTES);
-    if (kind === 'video') return idx.filter((f) => f.kind === 'video');
+    if (kind === 'movie' || kind === 'video') return idx.filter((f) => f.kind === 'video');
     if (kind === 'photo') return idx.filter((f) => f.kind === 'photo');
     if (kind === 'doc') return idx.filter((f) => f.kind === 'doc');
     return idx;
   }
-  function rank(idx, query, kind) {
-    return pool(idx, kind).map((f) => ({ f, s: score(query, f.key) })).filter((x) => x.s >= 45).sort((a, b) => b.s - a.s || b.f.mtime - a.f.mtime);
+  // read size + date only for the files we really need (cached on the entry)
+  async function ensureStat(list) {
+    const todo = list.filter((f) => f.size < 0);
+    for (let i = 0; i < todo.length; i += 32) {
+      await Promise.all(todo.slice(i, i + 32).map(async (f) => { try { const st = await fs.promises.stat(f.p); f.size = st.size; f.mtime = st.mtimeMs; } catch (e) { f.size = 0; f.mtime = 0; } }));
+      await new Promise((r) => setImmediate(r));
+    }
+  }
+  // "iron man" or "iron man|marvel studios" (name | folder hint). Returns the best matches, newest first among equals.
+  async function rank(idx, query, kind) {
+    const parts = String(query || '').split('|'), name = parts[0], hint = norm(parts[1] || '');
+    const cand = pool(idx, kind).map((f) => {
+      let sc = score(name, f.key, f.ctx);
+      if (hint) { const ht = hint.split(' ').filter(Boolean), ct = String(f.ctx || ''); sc = ht.every((t) => ct.indexOf(t) >= 0) ? sc + 20 : sc * 0.6; }
+      return { f, s: sc };
+    }).filter((x) => x.s >= 45).sort((a, b) => b.s - a.s);
+    const top = cand.slice(0, 25);
+    await ensureStat(top.map((x) => x.f));
+    let out = top;
+    if (kind === 'photo') out = out.filter((x) => x.f.size === 0 || x.f.size >= 20 * 1024);          // skip tiny icons
+    if (kind === 'movie') { const big = out.filter((x) => x.f.size >= MOVIE_MIN_BYTES); if (big.length) out = big; }   // prefer real movies over short clips
+    out.total = cand.length;
+    return out.sort((a, b) => (b.s - a.s) || (b.f.mtime - a.f.mtime));
+  }
+  async function newest(idx, kind, limit) {
+    const l = pool(idx, kind); await ensureStat(l);
+    let out = l.filter((f) => kind === 'photo' ? (f.size === 0 || f.size >= 20 * 1024) : kind === 'movie' ? f.size >= MOVIE_MIN_BYTES : true);
+    out = out.sort((a, b) => b.mtime - a.mtime); return limit ? out.slice(0, limit) : out;
   }
   const KINDS = /^(music|video|movie|photo|doc)$/;
   const NOUN = { music: 'song', movie: 'movie', video: 'video', photo: 'photo', doc: 'document', '': 'file' };
@@ -237,9 +276,106 @@ function make(deps) {
     return (await openUrl(search)) ? R(true, 'I opened the YouTube results for ' + q + '; pick one to play.') : R(false, 'I could not open YouTube.');
   }
 
+
+  // ---------------------------------------------------------------- v1.24.0: scheduled jobs on the PC ----------
+  // A job runs ONE whitelisted action at a time (see SCHED_OK). Danger-tier jobs (sleep/shutdown/restart) can only be
+  // created while the "power commands" switch is on (deps.tierOn('danger')) and are re-checked when they run.
+  const SCHED_OK = { lock: 'ctl', volume: 'ctl', media: 'ctl', open: 'ctl', screenshot: 'ctl', url: 'ctl', youtube: 'ctl', cancelshutdown: 'ctl',
+    sleep: 'danger', shutdown: 'danger', restart: 'danger', backup: 'ctl', playrandom: 'ctl', playfile: 'ctl', playany: 'ctl', ytplay: 'ctl',
+    stopmedia: 'ctl', brightness: 'ctl', darkmode: 'ctl', openfolder: 'ctl', pclink: 'ctl', settingspage: 'ctl' };
+  const okType = (t) => typeof t === 'string' && Object.prototype.hasOwnProperty.call(SCHED_OK, t);
+  const JOBS_MAX = 30, LATE_MS = 10 * 60000;
+  const jobsFile = deps.userData ? path.join(deps.userData, 'jarvis-jobs.json') : '';
+  let jobs = [], jobSeq = 1, jobsLoaded = false, schedTimer = null;
+  const nowMs = () => (deps.now ? deps.now() : Date.now());
+  function loadJobs() {
+    if (jobsLoaded) return; jobsLoaded = true;
+    try { if (jobsFile) { const j = JSON.parse(fs.readFileSync(jobsFile, 'utf8')); if (Array.isArray(j.jobs)) { jobs = j.jobs.filter((x) => x && okType(x.type)).slice(0, JOBS_MAX); jobSeq = Math.max(1, +j.seq || 1); } } } catch (e) { /* none yet */ }
+  }
+  function saveJobs() { try { if (jobsFile) fs.writeFileSync(jobsFile, JSON.stringify({ seq: jobSeq, jobs })); } catch (e) { /* ignore */ } }
+  const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const hhmm = (h, m) => String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  function nextAt(j, from) {
+    if (j.k === 'in') return j.at;
+    const d = new Date(from); d.setHours(j.h, j.m, 0, 0);
+    for (let i = 0; i < 9; i++) {
+      if (d.getTime() > from && (j.k !== 'weekly' || (j.dow || []).indexOf(d.getDay()) >= 0)) return d.getTime();
+      d.setDate(d.getDate() + 1); d.setHours(j.h, j.m, 0, 0);
+    }
+    return from + 86400000;
+  }
+  function whenText(j) {
+    if (j.k === 'in') return 'at ' + new Date(j.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (j.k === 'once') return 'once at ' + hhmm(j.h, j.m);
+    if (j.k === 'daily') return 'every day at ' + hhmm(j.h, j.m);
+    return 'every ' + (j.dow || []).map((d) => DAYN[d]).join('/') + ' at ' + hhmm(j.h, j.m);
+  }
+  const int = (x, lo, hi) => { const n = Math.floor(+x); return Number.isFinite(n) && n >= lo && n <= hi ? n : null; };
+  function ensureScheduler() {
+    loadJobs();
+    if (schedTimer || deps.scheduler === false) return;
+    schedTimer = setInterval(() => { tick(nowMs()); }, 20000);
+    if (schedTimer.unref) schedTimer.unref();
+  }
+  async function runJob(j) {
+    const tier = SCHED_OK[j.type];
+    if (tier !== 'ctl' && !(deps.tierOn && deps.tierOn(tier))) return R(false, 'skipped — power commands are switched off on the PC');
+    try {
+      if (Object.prototype.hasOwnProperty.call(H, j.type)) return await H[j.type](j.arg, j.arg2);
+      if (deps.run) return await deps.run(j.type, j.arg, j.arg2);
+    } catch (e) { /* fall through */ }
+    return R(false, 'that action is not available');
+  }
+  async function tick(now) {
+    loadJobs();
+    const due = jobs.filter((j) => j.at <= now);
+    for (const j of due) {
+      const late = now - j.at;
+      if (j.k === 'in' || j.k === 'once') jobs = jobs.filter((x) => x.id !== j.id); else j.at = nextAt(j, now);
+      saveJobs();
+      if (late > LATE_MS) { if (deps.notifyPhone) { try { deps.notifyPhone('Missed (PC was off): ' + j.label); } catch (e) { /* ignore */ } } continue; }
+      const r = await runJob(j);
+      if (deps.notifyPhone && j.type !== 'backup') { try { deps.notifyPhone(j.label + ': ' + (r.ok ? 'done' : (r.msg || 'failed'))); } catch (e) { /* ignore */ } }
+    }
+    return due.length;
+  }
+  // ---- backup: copy only (robocopy /E /XO, never /MIR or /PURGE), in the background
+  const BK = { documents: 'documents', desktop: 'desktop', pictures: 'pictures', photos: 'pictures', music: 'music', videos: 'videos', downloads: 'downloads' };
+  let backupBusy = false;
+  function defaultBackupDrive(srcDrive) {
+    for (const L of 'DEFGHIJKLMNOPQRSTUVWXYZ') { if (L !== srcDrive && fs.existsSync(L + ':\\')) return L; }
+    return '';
+  }
+  // ---- remote mouse / keyboard: one small persistent PowerShell reads fixed numeric commands from stdin
+  const MOUSE_PS = "Add-Type -Name M -Namespace J -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f,int dx,int dy,int d,UIntPtr e); [DllImport(\"user32.dll\")] public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);'; " +
+    "while (($l = [Console]::In.ReadLine()) -ne $null) { $p = $l.Split(' '); try { if ($p[0] -eq 'e') { [J.M]::mouse_event([uint32]$p[1],[int]$p[2],[int]$p[3],[int]$p[4],[UIntPtr]::Zero) } elseif ($p[0] -eq 'k') { [J.M]::keybd_event([byte]$p[1],0,[uint32]$p[2],[UIntPtr]::Zero) } } catch { } }";
+  const MKEYS = { enter: 0x0D, backspace: 0x08, esc: 0x1B, tab: 0x09, space: 0x20, delete: 0x2E, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,
+    left: 0x25, up: 0x26, right: 0x27, down: 0x28, win: 0x5B, f5: 0x74, f11: 0x7A, volup: 0xAF, voldown: 0xAE, mute: 0xAD, next: 0xB0, prev: 0xB1, playpause: 0xB3 };
+  let helper = null, helperIdle = null;
+  function helperWrite(lines) {
+    if (platform !== 'win32') return WINMSG;
+    try {
+      if (!helper) {
+        const sp = deps.spawn || cp.spawn;
+        helper = sp(PS, PS_ARGS.concat([MOUSE_PS]), { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+        const mine = helper;
+        helper.on('exit', () => { if (helper === mine) helper = null; });
+        helper.on('error', () => { if (helper === mine) helper = null; });
+      }
+      helper.stdin.write(lines.join('\n') + '\n');
+      clearTimeout(helperIdle);
+      helperIdle = setTimeout(() => { try { if (helper) helper.stdin.end(); } catch (e) { /* ignore */ } helper = null; }, 120000);
+      if (helperIdle.unref) helperIdle.unref();
+      return '';
+    } catch (e) { helper = null; return 'Mouse control could not start.'; }
+  }
+  const press = (vk) => ['k ' + vk + ' 0', 'k ' + vk + ' 2'];
+
   const H = {
     async pcinfo(arg) {
       switch (String(arg || 'status').toLowerCase()) {
+        case 'time': { const n = Date.now(); return R(true, 'PC time ' + new Date(n).toLocaleTimeString() + ' (epoch ' + n + ')'); }
+        case 'mac': { const m = macLine(); return m ? R(true, 'The PC network address is ' + m + ' (' + ipLine() + ').') : R(false, 'I could not read the PC network address.'); }
         case 'cpu': return R(true, 'The processor is at ' + (await cpuPct()) + '%.');
         case 'memory': case 'ram': return R(true, memLine() + '.');
         case 'uptime': return R(true, 'Your PC has been on for ' + upLine() + '.');
@@ -281,6 +417,97 @@ function make(deps) {
       const r = await ps('Start-Process $env:JARVIS_URI', { JARVIS_URI: uri });
       return r.ok ? R(true, 'Opened ' + arg + ' settings.') : fail(r, 'I could not open that settings page.');
     },
+    async jobadd(arg) {
+      let o; try { o = JSON.parse(String(arg || '')); } catch (e) { return R(false, 'I could not read that schedule.'); }
+      if (!o || !okType(o.type)) return R(false, 'I cannot schedule that kind of command.');
+      loadJobs();
+      if (jobs.length >= JOBS_MAX) return R(false, 'There are too many scheduled jobs. Cancel some first.');
+      const tier = SCHED_OK[o.type];
+      if (tier !== 'ctl' && !(deps.tierOn && deps.tierOn(tier))) return R(false, 'Power commands are switched off on the PC, so I cannot schedule that. Turn on "Allow power commands" there first.');
+      const now = nowMs(), j = { id: jobSeq, type: o.type, arg: clip(o.arg || '', 300), arg2: clip(o.arg2 || '', 100), label: clip(String(o.label || o.type).replace(/[\r\n]+/g, ' '), 60), k: o.k };
+      if (o.k === 'in') { const mins = int(o.min, 1, 1440); if (!mins) return R(false, 'I can schedule from 1 minute to 24 hours ahead.'); j.at = now + mins * 60000; }
+      else if (o.k === 'once' || o.k === 'daily' || o.k === 'weekly') {
+        j.h = int(o.h, 0, 23); j.m = int(o.m, 0, 59); if (j.h === null || j.m === null) return R(false, 'That time is not valid.');
+        if (o.k === 'weekly') { j.dow = (Array.isArray(o.dow) ? o.dow : []).map((d) => int(d, 0, 6)).filter((d) => d !== null).slice(0, 7); if (!j.dow.length) return R(false, 'Which days?'); }
+        j.at = nextAt(j, now);
+      } else return R(false, 'I do not understand that schedule.');
+      jobSeq++; jobs.push(j); saveJobs(); ensureScheduler();
+      return R(true, 'Scheduled #' + j.id + ': ' + j.label + ' ' + whenText(j) + '.');
+    },
+    async joblist() {
+      loadJobs();
+      if (!jobs.length) return R(true, 'There are no scheduled jobs on the PC.');
+      return R(true, jobs.length + ' scheduled: ' + jobs.slice(0, 6).map((j) => '#' + j.id + ' ' + j.label + ' ' + whenText(j)).join('; ') + (jobs.length > 6 ? '; and more' : '') + '.');
+    },
+    async jobdel(arg) {
+      loadJobs(); const a = String(arg || '').trim().toLowerCase();
+      if (a === 'all') { const n = jobs.length; jobs = []; saveJobs(); return R(true, n ? 'Cancelled all ' + n + ' scheduled jobs.' : 'There were no scheduled jobs.'); }
+      const id = int(a.replace(/^#/, ''), 1, 1e9), j = jobs.filter((x) => x.id === id)[0];
+      if (!j) return R(false, 'I could not find that job number.');
+      jobs = jobs.filter((x) => x.id !== id); saveJobs(); return R(true, 'Cancelled #' + id + ': ' + j.label + '.');
+    },
+    async backup(arg, arg2) {
+      const key = BK[norm(arg)];
+      if (!key) return R(false, 'I can back up Documents, Desktop, Pictures, Music, Videos or Downloads.');
+      if (platform !== 'win32') return R(false, WINMSG);
+      if (backupBusy) return R(false, 'A backup is already running.');
+      let src = ''; try { src = deps.getPath ? deps.getPath(key) : ''; } catch (e) { /* ignore */ }
+      if (!src) return R(false, 'I could not find that folder.');
+      const srcDrive = String(src).slice(0, 1).toUpperCase();
+      let drive = /^[a-z]$/i.test(String(arg2 || '').trim()) ? String(arg2).trim().toUpperCase() : defaultBackupDrive(srcDrive);
+      if (!drive) return R(false, 'I did not find a second drive. Say which drive to use, for example "back up my documents to F drive".');
+      if (!fs.existsSync(drive + ':\\')) return R(false, 'Drive ' + drive + ' is not available.');
+      if (drive === srcDrive) return R(false, 'That is the same drive as the folder, so it would not protect you. Pick another drive.');
+      const name = key.charAt(0).toUpperCase() + key.slice(1), dest = drive + ':\\Jarvis-Backup\\' + name;
+      backupBusy = true;
+      try {
+        exec('robocopy', [src, dest, '/E', '/XO', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NP', '/MT:2'], { windowsHide: true, timeout: 6 * 3600 * 1000, maxBuffer: 1 << 22 }, (e) => {
+          backupBusy = false;
+          const ok = !e || (typeof e.code === 'number' && e.code < 8);
+          if (deps.notifyPhone) { try { deps.notifyPhone(ok ? 'Backup of ' + name + ' to ' + dest + ' finished.' : 'Backup of ' + name + ' had a problem.'); } catch (x) { /* ignore */ } }
+        });
+      } catch (e) { backupBusy = false; return R(false, 'I could not start the backup.'); }
+      return R(true, 'Backup of ' + name + ' started to ' + dest + '. Files are only copied, never deleted. I will tell your phone when it is done.');
+    },
+    async mouse(arg, arg2) {
+      const a = String(arg || '').toLowerCase(), d = String(arg2 || '');
+      let lines = [], said = '';
+      if (a === 'move') {
+        let dx = 0, dy = 0;
+        d.split(';').slice(0, 30).forEach((p) => { const m = /^\s*(-?\d{1,4})\s*,\s*(-?\d{1,4})\s*$/.exec(p); if (m) { dx += +m[1]; dy += +m[2]; } });
+        dx = Math.max(-4000, Math.min(4000, dx)); dy = Math.max(-4000, Math.min(4000, dy));
+        if (!dx && !dy) return R(true, 'ok');
+        lines = ['e 1 ' + dx + ' ' + dy + ' 0'];
+      } else if (a === 'click') {
+        const b = d.toLowerCase();
+        if (b === 'r') lines = ['e 8 0 0 0', 'e 16 0 0 0']; else if (b === 'd') lines = ['e 2 0 0 0', 'e 4 0 0 0', 'e 2 0 0 0', 'e 4 0 0 0']; else lines = ['e 2 0 0 0', 'e 4 0 0 0'];
+        said = b === 'r' ? 'Right click.' : b === 'd' ? 'Double click.' : 'Click.';
+      } else if (a === 'down') lines = ['e 2 0 0 0'];
+      else if (a === 'up') lines = ['e 4 0 0 0'];
+      else if (a === 'scroll') { const n = int(d, -40, 40); if (!n) return R(true, 'ok'); lines = ['e 2048 0 0 ' + (-n * 40)]; }
+      else if (a === 'key') {
+        const k = d.toLowerCase();
+        if (k === 'alttab') lines = ['k 18 0'].concat(press(9), ['k 18 2']);
+        else if (Object.prototype.hasOwnProperty.call(MKEYS, k)) lines = press(MKEYS[k]);
+        else return R(false, 'I do not know that key.');
+        said = 'Pressed ' + k + '.';
+      } else return R(false, 'I do not know that mouse action.');
+      const err = helperWrite(lines);
+      return err ? R(false, err) : R(true, said || 'ok');
+    },
+    async pclink(arg) {
+      const u = String(arg || '').trim();
+      if (!/^https?:\/\/[^\s]{3,2000}$/i.test(u)) return R(false, 'That is not a web link I can open.');
+      return (await openUrl(u)) ? R(true, 'Opened the link on the PC.') : R(false, 'I could not open the link on the PC.');
+    },
+    async wolsetup() {
+      const script = "$a = Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1; if (-not $a) { 'NOADAPTER'; exit } try { Set-NetAdapterPowerManagement -Name $a.Name -WakeOnMagicPacket Enabled -ErrorAction Stop; 'OK ' + $a.Name } catch { 'ERR ' + $_.Exception.Message }";
+      const r = await ps(script);
+      const o = String(r.out || '').trim();
+      if (/^OK/.test(o)) return R(true, 'Wake-on-LAN is switched on for the network adapter. If the PC still does not wake, also enable "Wake on LAN" in the BIOS and turn off Windows Fast Startup.');
+      if (/^NOADAPTER/.test(o)) return R(false, 'I could not find an active network adapter.');
+      return R(false, 'I could not change that automatically (Jarvis may need to run as administrator). Open Device Manager, your network adapter, Power Management, tick "Allow this device to wake the computer" and "Only allow a magic packet", then enable Wake-on-LAN in the BIOS.');
+    },
     async clipset(arg) {
       const text = String(arg == null ? '' : arg).slice(0, 5000);
       if (!text) return R(false, 'There is nothing to copy.');
@@ -304,17 +531,20 @@ function make(deps) {
     },
     async playfile(arg, arg2) {
       const kind = KINDS.test(String(arg2 || '')) ? String(arg2) : '';
-      const name = String(arg || '').trim().slice(0, 120);
+      const raw = String(arg || '').trim().slice(0, 140), name = raw.split('|')[0].trim();
       if (!name) return R(false, 'Tell me the name of the ' + NOUN[kind] + '.');
       const verb = kind === 'photo' || kind === 'doc' || kind === '' ? 'Opening' : 'Playing';
       let idx = await getIndex(false), best = null;
-      if (LATEST.test(name)) {                                        // "my latest photo", "the newest movie"
-        const l = pool(idx, kind).slice().sort((a, b) => b.mtime - a.mtime); best = l[0] || null;
-      } else {
-        let hits = rank(idx, name, kind);
-        if (!hits.length && kind === 'movie') hits = rank(idx, name, 'video');
-        if (!hits.length) { idx = await getIndex(true); hits = rank(idx, name, kind === 'movie' ? 'video' : kind); }   // maybe a brand-new file
+      if (LATEST.test(name)) { best = (await newest(idx, kind, 1))[0] || null; }
+      else {
+        let hits = await rank(idx, raw, kind);
+        if (!hits.length) { idx = await getIndex(true); hits = await rank(idx, raw, kind); }     // maybe a brand-new file
         best = hits.length ? hits[0].f : null;
+      }
+      if (!best && kind === '' && !LATEST.test(name)) {                 // "open marvel studios file" = the user named a folder: open it
+        const q = norm(name).split(' ').filter(Boolean);
+        const hit = q.length ? idx.find((f) => { const d = norm(path.basename(path.dirname(f.p))); return d === q.join(' ') || (q.length > 1 ? q.every((t) => d.indexOf(t) >= 0) : false); }) : null;
+        if (hit) { const dir = path.dirname(hit.p); try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(dir); if (!e) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); } } catch (e2) { /* fall back */ } const r2 = await ps('Start-Process -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: dir }); if (r2.ok) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); }
       }
       if (!best) return R(false, 'I could not find ' + (LATEST.test(name) ? 'any ' + PLURAL[kind] : 'a ' + NOUN[kind] + ' called ' + clip(name, 50)) + ' on this PC.');
       return (await openFile(best)) ? R(true, verb + ' ' + pretty(best) + '.') : R(false, 'I found ' + pretty(best) + ' but could not open it.');
@@ -323,25 +553,32 @@ function make(deps) {
       const kind = /^(movie|video)/.test(String(arg || '')) ? 'movie' : 'music';
       const list = pool(await getIndex(false), kind);
       if (!list.length) return R(false, 'I could not find any ' + (kind === 'movie' ? 'movies' : 'music') + ' on this PC.');
-      const f = list[Math.floor((deps.random || Math.random)() * list.length)];
+      const rnd = deps.random || Math.random; let f = null;
+      for (let i = 0; i < 30 && !f; i++) {                                       // movies must be big files: stat random picks until one is
+        const c = list[Math.floor(rnd() * list.length)];
+        if (kind !== 'movie') { f = c; break; }
+        await ensureStat([c]); if (c.size >= MOVIE_MIN_BYTES) f = c;
+      }
+      if (!f) return R(false, 'I could not find a full-length movie on this PC.');
       return (await openFile(f)) ? R(true, 'Playing ' + pretty(f) + '.') : R(false, 'I could not open that file.');
     },
     async playany(arg) {
       const name = String(arg || '').trim().slice(0, 120);
       if (!name) return R(false, 'Tell me what to play.');
-      const hits = rank(await getIndex(false), name, '').filter((x) => x.s >= 60 && (x.f.kind === 'music' || x.f.kind === 'video'));
+      const hits = (await rank(await getIndex(false), name, '')).filter((x) => x.s >= 60 && (x.f.kind === 'music' || x.f.kind === 'video'));
       if (hits.length && (await openFile(hits[0].f))) return R(true, 'Playing ' + pretty(hits[0].f) + ' from this PC.');
       return youtubePlay(name);
     },
     async ytplay(arg) { return youtubePlay(arg); },
     async medialist(arg, arg2) {
       const kind = KINDS.test(String(arg2 || '')) ? String(arg2) : '';
-      const idx = await getIndex(false), q = String(arg || '').trim();
-      const list = q && !LATEST.test(q) ? rank(idx, q, kind).map((x) => x.f) : pool(idx, kind).slice().sort((a, b) => b.mtime - a.mtime);
+      const idx = await getIndex(false), q = String(arg || '').trim(), m = q && !LATEST.test(q.split('|')[0]);
+      let list, total;
+      if (m) { const r = await rank(idx, q, kind); list = r.map((x) => x.f); total = r.total || list.length; }
+      else { list = await newest(idx, kind, 0); total = list.length; }
       const noun = PLURAL[kind];
-      if (!list.length) return R(true, 'I did not find any ' + noun + (q && !LATEST.test(q) ? ' matching ' + clip(q, 40) : '') + ' on this PC.');
-      const m = q && !LATEST.test(q);
-      return R(true, 'I found ' + list.length + ' ' + noun + (m ? ' matching ' + clip(q, 40) : '') + '. ' + (m ? 'Best matches' : 'Newest') + ': ' + list.slice(0, 4).map(pretty).join('; ') + '.');
+      if (!list.length) return R(true, 'I did not find any ' + noun + (m ? ' matching ' + clip(q.split('|')[0], 40) : '') + ' on this PC.');
+      return R(true, 'I found ' + total + ' ' + noun + (m ? ' matching ' + clip(q.split('|')[0], 40) : '') + '. ' + (m ? 'Best matches' : 'Newest') + ': ' + list.slice(0, 4).map(pretty).join('; ') + '.');
     },
     async openfolder(arg) {
       const key = String(arg || '').toLowerCase();
@@ -381,6 +618,7 @@ function make(deps) {
 
   return {
     TIER, SETTINGS, KEYS, score, nameKey,
+    startScheduler() { ensureScheduler(); }, stopScheduler() { clearInterval(schedTimer); schedTimer = null; try { if (helper) helper.stdin.end(); } catch (e) { /* ignore */ } helper = null; }, _tick: tick, _jobs: () => { loadJobs(); return jobs; },
     refreshMediaIndex() { return getIndex(true).then((i) => i.length); },   // optional: call once at app start so the first command is instant
     handles(type) { return Object.prototype.hasOwnProperty.call(H, type); },
     tier(type) { return TIER[type] || null; },

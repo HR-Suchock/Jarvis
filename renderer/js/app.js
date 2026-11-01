@@ -706,12 +706,13 @@
     try {
       var st = linkState(); if (!st.paired || !B || !B.linkCode) return null;
       var c = JSON.parse(B.linkCode()); if (!c.ok) return null;
-      return { code: c.code, on: !!st.enabled, ctl: !!st.ctl, input: !!st.input, danger: !!st.danger };
+      return { code: c.code, on: !!st.enabled, ctl: !!st.ctl, input: !!st.input, danger: !!st.danger, mac: store.get('pcmac') || '' };
     } catch (e) { return null; }
   }
   function linkRestore(l) {
     try {
       if (!l || typeof l.code !== 'string' || !B || !B.linkPair) return;
+      if (l.mac) store.set('pcmac', l.mac);
       var r = JSON.parse(B.linkPair(l.code)); if (!r.ok) return;
       B.linkSet(JSON.stringify({ enabled: !!l.on, ctl: l.ctl !== false, input: !!l.input, danger: !!l.danger }));
     } catch (e) { /* ignore */ }
@@ -724,11 +725,332 @@
   /* ------------------------------------------------------------------ device link: run a command on the other device */
   var linkOn = false, linkWait = {};
   function linkState() { try { return JSON.parse((B && B.linkState && B.linkState()) || '{}'); } catch (e) { return {}; } }
+  /* ---- link health (v1.23): friendly errors, command log, online light, self-test, diagnostics ---- */
+  function jparse(x) { try { return JSON.parse(x); } catch (e) { return {}; } }
+  function linkDiag() { try { return (B && B.linkDiag) ? jparse(B.linkDiag()) : {}; } catch (e) { return {}; } }
+  var OTHER = PC ? 'phone' : 'PC';
+  // Turns the raw link failure into a sentence that says what to do about it.
+  function linkFriendly(msg) {
+    var m = String(msg || ''), d = linkDiag();
+    var http = (m.match(/\((-?\d{1,3})\)/) || [])[1];
+    if (/^No answer/.test(m)) {
+      if (d.connected === false) return 'This ' + (PC ? 'PC' : 'phone') + ' is not connected to the link database right now' + (d.lastErr ? ' (' + String(d.lastErr).slice(0, 70) + ')' : '') + '. Check the internet connection and that the Firebase rules were published.';
+      if (d.skewAgoS >= 0 && d.skewAgoS < 900 && Math.abs(d.skewS) >= 100) return 'The clocks on your phone and PC differ by about ' + Math.round(Math.abs(d.skewS) / 60) + ' minutes, so the messages are rejected. Set date and time to automatic on both.';
+      return 'Your ' + OTHER + ' did not answer. It may be off, asleep or offline, or Jarvis is not running there, or the link is switched off on it.' + (PC ? '' : ' If it is asleep, say “wake my PC”.');
+    }
+    if (/Database write failed|Could not reach the link database/.test(m)) {
+      if (http === '401' || http === '403') return 'The database refused the message (permission denied). Publish the Firebase rules again: Settings → Device Link shows them with a copy button.';
+      if (http === '404') return 'The database address looks wrong. Check it in Settings → Device Link.';
+      if (http === '-1' || /Unable to resolve|timed out|Network|Failed to connect|UnknownHost/i.test(m)) return 'There is no internet connection to the link database.';
+      return 'The link database could not be reached. Check the internet connection.';
+    }
+    if (/device link is not running/i.test(m)) return 'The device link is switched off. Turn it on in Settings → Device Link.';
+    return m;
+  }
+  var LOGKEY = 'linklog', LOGMASK = { type: 1, sms: 1, clipset: 1, notify: 1, call: 1 };
+  function lkGet() { try { var a = JSON.parse(store.get(LOGKEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  function lkAdd(e) { try { var a = lkGet(); a.push(e); if (a.length > 100) a = a.slice(-100); store.set(LOGKEY, JSON.stringify(a)); } catch (x) { /* ignore */ } }
+  function logArg(type, arg) { var a = String(arg || ''); return LOGMASK[type] ? (a ? '(' + a.length + ' characters)' : '') : a.slice(0, 50); }
+  var pcOnline = null;
+  function noteOnline(v) { if (pcOnline !== v) { pcOnline = v; updatePcChip(); } }
+  function updatePcChip() {
+    var c = document.getElementById('pc-chip'); if (!c) return;
+    var st = linkState();
+    if (!st.paired || !st.enabled) { c.style.display = 'none'; return; }
+    c.style.display = '';
+    c.className = 'chip chip-btn pcc ' + (pcOnline === true ? 'on' : pcOnline === false ? 'off' : 'chk');
+    c.innerHTML = '<i></i>' + (PC ? 'PHONE' : 'PC');
+    c.title = 'Your ' + OTHER + ' is ' + (pcOnline === true ? 'online' : pcOnline === false ? 'not answering' : 'being checked') + ' — tap to check now';
+  }
+  var pingBusy = false, pingQ = [];
+  function pcPing(cb) {
+    if (!B || !B.linkPing) { if (cb) cb({ ok: false, msg: 'The device link needs the latest version of Jarvis.' }); return; }
+    if (pingBusy) { if (cb) pingQ.push(cb); return; }
+    pingBusy = true; if (cb) pingQ.push(cb);
+    var id; try { id = B.linkPing(); } catch (e) { pingBusy = false; pingQ = []; if (cb) cb({ ok: false, msg: 'The device link failed to start.' }); return; }
+    var done = false;
+    function fin(d) {
+      if (done) return; done = true; pingBusy = false;
+      if (d.ok) noteOnline(true); else if (/^No answer/.test(d.msg || '')) noteOnline(linkDiag().connected === false ? null : false); else noteOnline(null);
+      var res = { ok: !!d.ok, msg: d.ok ? d.msg : linkFriendly(d.msg) }, q = pingQ; pingQ = [];
+      q.forEach(function (f) { try { f(res); } catch (e) { /* ignore */ } });
+    }
+    linkWait[id] = fin;
+    setTimeout(function () { if (!done) { delete linkWait[id]; fin({ ok: false, msg: 'No answer — timed out' }); } }, 20000);
+  }
+  function watchPc() {
+    function tick() {
+      if (document.hidden) return;
+      var st = linkState();
+      if (!st.paired || !st.enabled) { pcOnline = null; updatePcChip(); return; }
+      pcPing();
+    }
+    setInterval(tick, 60000); setTimeout(tick, 2500); updatePcChip();
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(tick, 400); });
+    var c = document.getElementById('pc-chip');
+    if (c) c.addEventListener('click', function () { toast('Checking your ' + OTHER + '…', 1600); pcPing(function (r) { toast(r.ok ? 'Your ' + OTHER + ' is online ✓' : r.msg, 5200); }); });
+  }
   function linkSend(type, arg, arg2, cb) {
     var id; try { id = B.linkSend(type, arg || '', arg2 || ''); } catch (e) { cb({ ok: false, msg: 'The device link failed to start.' }); return; }
-    var done = false;
-    linkWait[id] = function (d) { if (done) return; done = true; cb(d); };
-    setTimeout(function () { if (!done) { done = true; delete linkWait[id]; cb({ ok: false, msg: 'No answer from your ' + (PC ? 'phone' : 'PC') + '.' }); } }, 30000);
+    var done = false, t0 = Date.now();
+    function fin(d) {
+      if (done) return; done = true;
+      var raw = String(d.msg || ''), msg = d.ok ? raw : linkFriendly(raw);
+      lkAdd({ t: t0, d: 'out', ty: type, a: logArg(type, arg), ok: !!d.ok, m: msg.slice(0, 160), ms: Date.now() - t0 });
+      if (d.ok) noteOnline(true); else if (/^No answer/.test(raw)) noteOnline(linkDiag().connected === false ? null : false);
+      cb({ ok: !!d.ok, msg: msg, raw: raw });
+    }
+    linkWait[id] = fin;
+    setTimeout(function () { if (!done) { delete linkWait[id]; fin({ ok: false, msg: 'No answer from your ' + (PC ? 'phone' : 'PC') + '.' }); } }, 30000);
+  }
+  function fmtAgo(t) { var s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : s < 86400 ? Math.round(s / 3600) + 'h ago' : Math.round(s / 86400) + 'd ago'; }
+  function lkText() {
+    var a = lkGet().slice(-40).reverse();
+    if (!a.length) return 'No commands yet.';
+    return a.map(function (e) { return (e.d === 'in' ? '↓ ' : '↑ ') + new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '  ' + e.ty + (e.a ? ' ' + e.a : '') + '  ' + (e.ok ? '✓' : '✕') + (e.m ? ' ' + e.m : ''); }).join('\n');
+  }
+  function buildDiag() {
+    var st = linkState(), d = linkDiag(), info = {}, p = perms();
+    try { info = jparse(B && B.appInfo ? B.appInfo() : '{}'); } catch (e) { /* ignore */ }
+    var host = (st.dbUrl || '').replace(/^https:\/\//, '').replace(/^[^.]*/, '…');
+    var L = ['JARVIS DIAGNOSTICS', 'Version: ' + (info.version || '?') + (PC ? ' (PC)' : ' (phone, Android ' + (info.sdk || '?') + ')'), 'Time: ' + new Date().toString(),
+      'Link: paired=' + !!st.paired + ' on=' + !!st.enabled + ' connected=' + !!st.connected + ' database=' + (host || 'none'),
+      'Switches: control=' + !!st.ctl + ' typing=' + !!st.input + ' power/calls=' + !!st.danger,
+      'Other device: ' + (pcOnline === true ? 'online' : pcOnline === false ? 'not answering' : 'unknown'),
+      'Connection: lastError=' + (d.lastErr || 'none') + ' lastHttp=' + (d.lastHttp == null ? '?' : d.lastHttp) + ' connectedAgoS=' + (d.connectedAgoS == null ? '?' : d.connectedAgoS) + ' clockSkewS=' + (d.skewAgoS >= 0 ? d.skewS : 'none seen'),
+      'Permissions: mic=' + !!p.mic + ' call=' + !!p.call + ' contacts=' + !!p.contacts + ' typingControl=' + !!p.access,
+      'Saved PC address: ' + (store.get('pcmac') ? 'yes' : 'no'), '', 'LAST SELF-TEST:', store.get('linktest') || 'not run yet', '', 'RECENT COMMANDS (newest first):', lkText(), '',
+      '(No keys, pairing codes or typed text are included.)'];
+    return L.join('\n');
+  }
+  function runSelfTest(box) {
+    box.innerHTML = '';
+    var out = [], bad = 0, warn = 0, stopped = false;
+    function row(label) {
+      var r = el('div', 'st-row chk'); var i = el('span', 'st-i', '…'), b = el('div', 'st-b'); var l = el('div', 'st-l', label), dt = el('div', 'st-d', ''); b.appendChild(l); b.appendChild(dt); r.appendChild(i); r.appendChild(b); box.appendChild(r);
+      return function (lvl, txt) { r.className = 'st-row ' + lvl; i.textContent = lvl === 'ok' ? '✓' : lvl === 'warn' ? '!' : lvl === 'bad' ? '✕' : '–'; dt.textContent = txt || ''; if (lvl === 'bad') bad++; if (lvl === 'warn') warn++; out.push((lvl === 'ok' ? 'OK   ' : lvl === 'warn' ? 'WARN ' : lvl === 'bad' ? 'FAIL ' : 'SKIP ') + label + (txt ? ' — ' + txt : '')); };
+    }
+    var steps = [];
+    function step(label, fn) { steps.push(function (next) { var set = row(label); if (stopped) { set('skip', 'skipped'); next(); return; } fn(set, next); }); }
+    step('Link set up and switched on', function (set, next) { var st = linkState(); if (!st.paired) { set('bad', 'Not paired yet. Finish the setup above.'); stopped = true; } else if (!st.enabled) { set('bad', 'The link is switched off. Turn on “Link switched on”.'); stopped = true; } else set('ok', 'Paired with your ' + OTHER + '.'); next(); });
+    step('Connected to the link database', function (set, next) { var d = linkDiag(); if (d.connected === false) { set('bad', linkFriendly('No answer') ); stopped = true; } else set('ok', 'Live connection is open.'); next(); });
+    step('Your ' + OTHER + ' answers', function (set, next) { pcPing(function (r) { if (r.ok) set('ok', 'Answered.'); else { set('bad', r.msg); stopped = true; } next(); }); });
+    step('Clocks agree', function (set, next) {
+      var t0 = Date.now();
+      linkSend('pcinfo', 'time', '', function (r) {
+        var m = String(r.raw || r.msg).match(/epoch (\d{10,})/);
+        if (!r.ok || !m) { set('warn', r.ok ? 'Could not read the other clock.' : r.msg); next(); return; }
+        var diff = Math.round((+m[1] - (t0 + Date.now()) / 2) / 1000), a = Math.abs(diff);
+        if (a > 100) set('bad', 'The clocks differ by about ' + Math.round(a / 60) + ' minutes — messages will be rejected. Set date and time to automatic on both devices.'); else if (a > 45) set('warn', 'The clocks differ by ' + a + ' seconds. Fine for now, but set time to automatic.'); else set('ok', 'Within ' + Math.max(a, 1) + ' second' + (a > 1 ? 's' : '') + '.');
+        next();
+      });
+    });
+    if (!PC) {
+      step('PC status', function (set, next) { linkSend('pcinfo', 'status', '', function (r) { set(r.ok ? 'ok' : 'warn', r.msg); next(); }); });
+      step('Typing, keys and mouse allowed on the PC', function (set, next) { linkSend('pckey', '', '', function (r) { if (/switched off/i.test(r.raw || r.msg)) set('warn', 'Switched off on the PC. Turn on “Allow typing and key presses” there if you want typing or the mouse.'); else if (!r.ok && /do not know|unknown/i.test(r.msg)) set('ok', 'Allowed.'); else set(r.ok ? 'ok' : 'warn', r.ok ? 'Allowed.' : r.msg); next(); }); });
+      step('Movies, music and photos on the PC', function (set, next) { linkSend('medialist', '', 'movie', function (r) { set(r.ok ? 'ok' : 'warn', r.ok ? r.msg.split('.')[0] + '.' : r.msg); next(); }); });
+      step('PC address saved for “wake my PC”', function (set, next) { if (store.get('pcmac')) set('ok', 'Saved: ' + store.get('pcmac')); else set('warn', 'Not saved yet. Use WAKE THE PC below while the PC is on.'); next(); });
+      step('Phone permissions', function (set, next) { var p = perms(); var miss = []; if (!p.mic) miss.push('microphone'); if (!p.access) miss.push('typing control'); if (miss.length) set('warn', 'Missing: ' + miss.join(', ') + '. Some PC-to-phone commands need them.'); else set('ok', 'Microphone and typing control allowed.'); next(); });
+    }
+    var i = 0;
+    (function go() {
+      if (i >= steps.length) {
+        var sum = el('div', 'st-sum ' + (bad ? 'bad' : warn ? 'warn' : 'ok'), bad ? bad + ' problem' + (bad > 1 ? 's' : '') + ' found — see the red lines.' : warn ? 'Working, with ' + warn + ' thing' + (warn > 1 ? 's' : '') + ' to look at.' : 'Everything works ✓');
+        box.appendChild(sum);
+        store.set('linktest', new Date().toLocaleString() + '\n' + out.join('\n'));
+        return;
+      }
+      steps[i++](go);
+    })();
+  }
+
+  /* ---- scheduled jobs, backup and remote touchpad (v1.24) ---- */
+  var DOWS = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+  var NUMS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, 'forty five': 45, sixty: 60 };
+  var TIMERX = '(noon|midnight|\\d{1,2}(?::\\d{2})?\\s*(?:a\\.?\\s?m\\.?|p\\.?\\s?m\\.?)?)(?: o\\W?clock)?';
+  function parseClock(x) {
+    x = String(x || '').trim();
+    if (x === 'noon') return { h: 12, m: 0 };
+    if (x === 'midnight') return { h: 0, m: 0 };
+    var m = x.match(/^(\d{1,2})(?::(\d{2}))?\s*(?:(a)|(p))?/);
+    if (!m) return null;
+    var h = +m[1], mi = m[2] ? +m[2] : 0; if (h > 24 || mi > 59) return null;
+    var ap = /a\.?\s?m/.test(x) ? 'a' : /p\.?\s?m/.test(x) ? 'p' : '';
+    if (ap === 'p' && h < 12) h += 12; else if (ap === 'a' && h === 12) h = 0;
+    else if (!ap && h >= 1 && h <= 12) {            // "at 6": whichever 6 comes next
+      var now = new Date(), best = null;
+      [h % 12, h % 12 + 12].forEach(function (c) { var d = new Date(); d.setHours(c, mi, 0, 0); if (d <= now) d.setDate(d.getDate() + 1); if (!best || d < best.d) best = { d: d, h: c }; });
+      h = best.h;
+    }
+    if (h === 24) h = 0;
+    return { h: h, m: mi };
+  }
+  function parseWhen(t) {
+    var m, w = null, rest = t;
+    if ((m = t.match(new RegExp('\\bevery (day|night|morning|evening|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: (?:at|around) ' + TIMERX + ')?')))) {
+      var c = m[2] ? parseClock(m[2]) : ({ morning: { h: 8, m: 0 }, evening: { h: 18, m: 0 }, night: { h: 23, m: 0 } })[m[1]];
+      if (!c) return null;
+      w = /^(?:day|night|morning|evening)$/.test(m[1]) ? { k: 'daily', h: c.h, m: c.m } : { k: 'weekly', h: c.h, m: c.m, dow: m[1] === 'weekday' ? [1, 2, 3, 4, 5] : [DOWS[m[1]]] };
+    } else if ((m = t.match(/\bin (\d{1,3}|an?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty five|forty|sixty|half an?) ?(minutes?|mins?|hours?|hrs?)\b/))) {
+      var n = /^half/.test(m[1]) ? 0.5 : (NUMS[m[1]] || parseInt(m[1], 10)), mins = Math.round(n * (/^h/.test(m[2]) ? 60 : 1));
+      if (!(mins >= 1 && mins <= 1440)) return null;
+      w = { k: 'in', min: mins };
+    } else if ((m = t.match(new RegExp('\\b(?:tomorrow |tonight |today |this (?:morning|evening) )?at ' + TIMERX + '(?= |$)')))) {
+      var c2 = parseClock(m[1]); if (!c2) return null;
+      w = { k: 'once', h: c2.h, m: c2.m };
+    }
+    if (!w) return null;
+    rest = t.replace(m[0], ' ').replace(/\s+/g, ' ').trim().replace(/^(?:and |then |to |please )+/, '').replace(/ (?:and|then|to|please)$/, '').trim();
+    return { w: w, rest: rest };
+  }
+  function whenLabel(w) {
+    var h12 = function (h, m) { return ((h % 12) || 12) + (m ? ':' + String(m).padStart(2, '0') : '') + (h < 12 ? ' AM' : ' PM'); };
+    if (w.k === 'in') return 'in ' + (w.min >= 60 && w.min % 60 === 0 ? (w.min / 60) + ' hour' + (w.min > 60 ? 's' : '') : w.min + ' minute' + (w.min > 1 ? 's' : ''));
+    if (w.k === 'once') return 'at ' + h12(w.h, w.m);
+    if (w.k === 'daily') return 'every day at ' + h12(w.h, w.m);
+    return 'every ' + (w.dow.length === 5 ? 'weekday' : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][w.dow[0]]) + ' at ' + h12(w.h, w.m);
+  }
+  var JOBTYPES = /^(?:lock|volume|media|open|screenshot|url|youtube|cancelshutdown|sleep|shutdown|restart|backup|playrandom|playfile|playany|ytplay|stopmedia|brightness|darkmode|openfolder|pclink|settingspage)$/;
+  function schedIntent(t) {
+    if (PC || !/\b(?:pc|computer|laptop)\b/.test(t) || !/\b(?:in|at|every)\b/.test(t)) return null;
+    var pw = parseWhen(t); if (!pw || !pw.rest) return null;
+    var inner = null, rest = pw.rest, rt = splitTarget(rest);
+    if (rt) inner = rt.target === 'pc' ? remoteIntent(rt) : null;
+    else inner = remoteIntent({ target: 'pc', rest: rest.replace(/^(?:tell|ask|have|make|let) (?:my |the )?(?:pc|computer|laptop)(?: to)? /, '') });
+    if (!inner || inner.kind !== 'remote' || inner.target !== 'pc' || !JOBTYPES.test(inner.type)) return null;
+    var spec = Object.assign({ type: inner.type, arg: inner.arg || '', arg2: inner.arg2 || '', label: (pw.rest.replace(/ (?:on|in|from) (?:my |the )?(?:pc|computer|laptop)$/, '').replace(/^(?:on|in) (?:my |the )?(?:pc|computer|laptop),? ?/, '')).slice(0, 60) }, pw.w);
+    return { kind: 'remote', target: 'pc', type: 'jobadd', arg: JSON.stringify(spec), arg2: '', inner: { type: inner.type, arg: inner.arg, arg2: inner.arg2 }, whenText: whenLabel(pw.w) };
+  }
+  function backupIntent(t) {
+    var m = t.match(/^(?:back ?up|backup) (?:my |the )?(documents|desktop|pictures|photos|music|videos|downloads)(?: folder)?(?: (?:on|from) (?:my |the )?(?:pc|computer|laptop))?(?: (?:to|onto|on) (?:my |the )?(?:drive |disk )?([a-z])(?: drive| disk)?)?$/);
+    return m ? act('backup', m[1], m[2] || '') : null;
+  }
+  function jobMgmtIntent(t) {
+    var PCW = '(?: on (?:my |the )?(?:pc|computer|laptop))?', m;
+    if (/^(?:what(?:'s| is| are)|show|list|check)(?: me)?(?: all)?(?: my| the)? (?:scheduled|pc|computer) (?:jobs|tasks|schedule)$/.test(t.replace(new RegExp(PCW + '$'), '')) || /^what(?:'s| is) scheduled on (?:my |the )?(?:pc|computer|laptop)$/.test(t))
+      return { kind: 'remote', target: 'pc', type: 'joblist', arg: '', arg2: '' };
+    if ((m = t.replace(new RegExp(PCW + '$'), '').match(/^(?:cancel|delete|remove|clear)(?: (all))?(?: my| the)? (?:scheduled |pc )(?:jobs?|tasks?|schedule)(?: (?:number |#)?(\d{1,3}))?$/)))
+      return { kind: 'remote', target: 'pc', type: 'jobdel', arg: m[2] || 'all', arg2: '' };
+    return null;
+  }
+  /* ---- remote touchpad: phone screen as the PC's mouse and keyboard ---- */
+  var padP = null, padDrag = false;
+  function openTouchpad() {
+    var st = linkState();
+    if (PC || !B || !B.linkState) { respond('The remote touchpad is part of the phone app, ' + addrName() + '.'); return; }
+    if (!st.paired || !st.enabled) { respond('The device link is not set up yet, ' + addrName() + '. Open Settings, then Device Link.'); return; }
+    if (!padP) buildTouchpad();
+    padP.open();
+  }
+  function buildTouchpad() {
+    padP = makePanel('padp', 'REMOTE TOUCHPAD');
+    var body = padP.body;
+    var note = el('div', 'dl-note', 'Moves your PC’s mouse over the internet, so expect a short delay. Needs “Allow typing and key presses” on in Jarvis on the PC.'); body.appendChild(note);
+    var stat = el('div', 'pad-stat', ''); body.appendChild(stat);
+    function say(msg, bad) { stat.textContent = msg || ''; stat.className = 'pad-stat' + (bad ? ' bad' : ''); }
+    function fire(a, d) { if (B && B.linkFire) B.linkFire('mouse', a, d || ''); }
+    function send(a, d, okmsg) { linkSend('mouse', a, d || '', function (r) { say(r.ok ? (okmsg || '') : r.msg, !r.ok); }); }
+    var pad = el('div', 'pad'); pad.id = 'pad-area'; pad.appendChild(el('span', '', 'Drag to move · tap = click · hold = right-click · two fingers = scroll'));
+    body.appendChild(pad);
+    // --- gestures
+    var g = { x: 0, y: 0, t0: 0, moved: 0, last: 0, fingers: 0, bx: 0, by: 0, fx: 0, fy: 0, sy: 0, sacc: 0, lp: null, longDone: false, flush: null };
+    function flushMove() {
+      var dx = Math.round(g.bx), dy = Math.round(g.by);
+      if (dx || dy) { fire('move', dx + ',' + dy); g.bx -= dx; g.by -= dy; }
+      var n = Math.trunc(g.sacc); if (n) { fire('scroll', String(n)); g.sacc -= n; }
+    }
+    function startFlush() { if (!g.flush) g.flush = setInterval(flushMove, 70); }
+    function stopFlush() { if (g.flush) { clearInterval(g.flush); g.flush = null; } flushMove(); }
+    pad.addEventListener('touchstart', function (e) {
+      e.preventDefault(); g.fingers = e.touches.length;
+      if (g.fingers === 1) { g.x = e.touches[0].clientX; g.y = e.touches[0].clientY; g.t0 = Date.now(); g.moved = 0; g.last = g.t0; g.longDone = false; g.bx = 0; g.by = 0;
+        clearTimeout(g.lp); g.lp = setTimeout(function () { if (g.fingers === 1 && g.moved < 10) { g.longDone = true; haptic(); fire('click', 'r'); } }, 550); }
+      else if (g.fingers === 2) { clearTimeout(g.lp); g.longDone = true; g.sy = (e.touches[0].clientY + e.touches[1].clientY) / 2; }
+      startFlush();
+    }, { passive: false });
+    pad.addEventListener('touchmove', function (e) {
+      e.preventDefault();
+      if (e.touches.length >= 2) { var y = (e.touches[0].clientY + e.touches[1].clientY) / 2; g.sacc += -(y - g.sy) / 12; g.sy = y; return; }
+      var x = e.touches[0].clientX, y1 = e.touches[0].clientY, now = Date.now(), dx = x - g.x, dy = y1 - g.y, dt = Math.max(1, now - g.last);
+      g.moved += Math.abs(dx) + Math.abs(dy); g.x = x; g.y = y1; g.last = now;
+      var v = Math.sqrt(dx * dx + dy * dy) / dt, gain = 1.3 + Math.min(2.4, v * 1.6);
+      g.bx += dx * gain; g.by += dy * gain;
+    }, { passive: false });
+    function endTouch(e) {
+      e.preventDefault(); var left = e.touches.length;
+      if (g.fingers === 1 && left === 0) { clearTimeout(g.lp); if (!g.longDone && g.moved < 10 && Date.now() - g.t0 < 260) { stopFlush(); fire('click', 'l'); haptic(); } }
+      g.fingers = left; if (left === 0) stopFlush();
+    }
+    pad.addEventListener('touchend', endTouch, { passive: false });
+    pad.addEventListener('touchcancel', endTouch, { passive: false });
+    // --- buttons
+    function row(items) {
+      var r = el('div', 'pad-row');
+      items.forEach(function (it) { var b = el('button', 'btn', it[0]); b.addEventListener('click', function () { haptic(); it[1](b); }); r.appendChild(b); });
+      body.appendChild(r); return r;
+    }
+    row([['LEFT', function () { send('click', 'l', 'Click.'); }], ['DOUBLE', function () { send('click', 'd', 'Double click.'); }], ['RIGHT', function () { send('click', 'r', 'Right click.'); }],
+      ['DRAG: OFF', function (b) { padDrag = !padDrag; send(padDrag ? 'down' : 'up', '', padDrag ? 'Holding the left button — move, then tap again to release.' : 'Released.'); b.textContent = padDrag ? 'DRAG: ON' : 'DRAG: OFF'; b.classList.toggle('pri', padDrag); }]]);
+    var keys = [['ESC', 'esc'], ['TAB', 'tab'], ['ENTER', 'enter'], ['⌫', 'backspace'], ['DEL', 'delete'], ['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right'], ['SPACE', 'space'], ['WIN', 'win'], ['ALT+TAB', 'alttab'], ['F5', 'f5'], ['F11', 'f11'], ['HOME', 'home'], ['END', 'end'], ['PG↑', 'pageup'], ['PG↓', 'pagedown']];
+    body.appendChild(el('div', 'dl-note', 'Keys'));
+    row(keys.map(function (k) { return [k[0], function () { send('key', k[1]); }]; })).classList.add('wrap');
+    body.appendChild(el('div', 'dl-note', 'Media and volume'));
+    row([['⏮', function () { send('key', 'prev'); }], ['⏯', function () { send('key', 'playpause'); }], ['⏭', function () { send('key', 'next'); }], ['VOL−', function () { send('key', 'voldown'); }], ['VOL+', function () { send('key', 'volup'); }], ['MUTE', function () { send('key', 'mute'); }]]);
+    body.appendChild(el('div', 'dl-note', 'Type on the PC'));
+    var ti = el('input', 'srch'); ti.placeholder = 'Text to type on the PC'; ti.autocomplete = 'off'; ti.spellcheck = false; body.appendChild(ti);
+    row([['TYPE IT', function () { var v = ti.value; if (!v) { say('Write something first.', true); return; } linkSend('type', v, '', function (r) { say(r.ok ? 'Typed on the PC.' : r.msg, !r.ok); if (r.ok) ti.value = ''; }); }],
+      ['TYPE + ENTER', function () { var v = ti.value; if (!v) { say('Write something first.', true); return; } linkSend('type', v, '', function (r) { if (!r.ok) { say(r.msg, true); return; } ti.value = ''; send('key', 'enter', 'Typed and pressed Enter.'); }); }]]);
+    padP.root.addEventListener('transitionend', function () { if (!padP.isOpen) { stopFlush(); if (padDrag) { padDrag = false; fire('up'); var db = padP.body.querySelector('.pad-row .btn.pri'); if (db) { db.classList.remove('pri'); db.textContent = 'DRAG: OFF'; } } } });
+  }
+
+  /* ---- Send to PC, Wake the PC, Find my phone (v1.23) ---- */
+  function shareToPc(text) {
+    var st = linkState();
+    if (PC) { respond('Sharing to the phone is not available here, ' + addrName() + '.'); return; }
+    if (!st.paired || !st.enabled) { respond('The device link is not set up yet, ' + addrName() + '. Open Settings, then Device Link.'); return; }
+    text = String(text || '').trim();
+    if (!text) { respond('There is nothing to send, ' + addrName() + '. Copy some text or a link first.'); return; }
+    var u = text.match(/https?:\/\/[^\s<>"]{3,1900}/i);
+    addMsg('act', '📤 Sending to your PC…', true);
+    runRemote({ kind: 'remote', target: 'pc', type: u ? 'pclink' : 'clipset', arg: u ? u[0] : text.slice(0, 5000), arg2: '' });
+  }
+  function macOf(x) { var m = String(x || '').match(/\b([0-9A-F]{2}(?:[:-][0-9A-F]{2}){5})\b/i); return m ? m[1].toUpperCase().replace(/-/g, ':') : ''; }
+  function wakePcNow() {
+    var mac = store.get('pcmac');
+    if (!B || !B.wakePc) { respond('Waking the PC needs the Android app, ' + addrName() + '.'); return; }
+    if (!mac) { respond('I need your PC’s network address first, ' + addrName() + '. Open Settings, Device Link, then Wake the PC, and tap Learn from PC while the PC is on.'); return; }
+    var r = jparse(B.wakePc(mac)); if (!r.ok) respond(r.msg || 'I could not send the wake signal.');
+  }
+  var wakeTimer = null;
+  function wakeWatch() {
+    if (wakeTimer) return; var n = 0;
+    wakeTimer = setInterval(function () {
+      n++; pcPing(function (r) { if (r.ok) { clearInterval(wakeTimer); wakeTimer = null; toast('Your PC is awake ✓', 4200); } });
+      if (n >= 6) { clearInterval(wakeTimer); wakeTimer = null; }
+    }, 20000);
+  }
+  function linkExtraIntent(t) {
+    var m;
+    if (!PC) {
+      var sj = schedIntent(t); if (sj) return sj;
+      var jm = jobMgmtIntent(t); if (jm) return jm;
+      var bk = backupIntent(t); if (bk) return { kind: 'remote', target: 'pc', type: 'backup', arg: bk.arg, arg2: bk.arg2 };
+      if (/^(?:open|show|start|use|launch)(?: the| my)?(?: remote)? (?:touchpad|trackpad|mouse pad)$|^(?:control|use) (?:my )?(?:pc|computer|laptop)(?:'s)? mouse(?: from here)?$|^(?:use )?(?:my )?phone as (?:a |the )?(?:mouse|touchpad|trackpad)(?: for (?:my )?(?:pc|computer|laptop))?$|^(?:open|show) (?:the )?remote mouse$/.test(t))
+        return { kind: 'ui', fn: openTouchpad, text: 'Opening the remote touchpad, ' + addrName() + '.', silent: true };
+      if (/^(?:send|share|push|put|copy|move|beam)(?: it| this| that| the| my)?(?: link| url| text| clipboard| copied text| copied link| what i copied)?(?: (?:over )?(?:to|onto|on)) (?:my |the )?(?:pc|computer|laptop|desktop)(?: clipboard)?$/.test(t) || /^(?:send|share) (?:my |the )?clipboard$/.test(t))
+        return { kind: 'ui', fn: function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); }, noHistory: true };
+      if (/^(?:get|bring|fetch|read|copy|show)(?: me)? (?:the |my )?(?:pc|computer|laptop)(?:'s| s)? clipboard(?: to (?:my )?phone)?$|^what(?:'s| is) on (?:the |my )?(?:pc|computer)(?:'s| s)? clipboard$/.test(t))
+        return { kind: 'remote', target: 'pc', type: 'clipget', arg: '', arg2: '', copyBack: true };
+      if (/^(?:wake|wake up|turn on|power on|boot|boot up|start up|switch on)(?: up)? (?:my |the )?(?:pc|computer|laptop|desktop)$/.test(t))
+        return { kind: 'ui', fn: wakePcNow, noHistory: true };
+      if (/^(?:find|ring|locate|where(?:'s| is)) (?:my |the )?phone$/.test(t))
+        return { kind: 'reply', text: 'Your phone is the one listening, ' + addrName() + '. To ring it from your PC, say “find my phone” in Jarvis on the PC.' };
+    }
+    if (PC && (/^(?:find|ring|locate|call|where(?:'s| is)) (?:my |the )?phone$/.test(t) || /^(?:make|let) (?:my )?phone ring$/.test(t)))
+      return { kind: 'remote', target: 'phone', type: 'findphone', arg: '', arg2: '' };
+    if (/^(?:stop|cancel|silence|end) (?:the |my )?(?:phone )?(?:ring(?:ing)?|find(?:ing)? (?:my )?phone)$|^(?:i )?(?:found|got|have) (?:it|my phone|the phone)$|^found (?:it|my phone)$/.test(t))
+      return PC ? { kind: 'remote', target: 'phone', type: 'stopring', arg: '', arg2: '' } : act('stopring', '', '', true);
+    return null;
   }
   var POWER = { shutdown: 'shut down', restart: 'restart', sleep: 'put to sleep', logoff: 'sign out of', emptybin: 'empty the recycle bin on' };
   function splitTarget(t) {
@@ -755,12 +1077,16 @@
     // ---- PC movies / music / YouTube (handled by pc-extra-actions.js on the PC)
     var KMAP = { movie: 'movie', film: 'movie', video: 'video', episode: 'video', show: 'video', series: 'video', song: 'music', music: 'music', track: 'music', audio: 'music', file: '', photo: 'photo', picture: 'photo', image: 'photo', pic: 'photo', document: 'doc', doc: 'doc', pdf: 'doc', spreadsheet: 'doc', presentation: 'doc', excel: 'doc', word: 'doc' };
     var PCLOC = '(?: (?:from|on|in|at) (?:my |the )?(?:pc|computer|laptop|local|hard ?drive|storage|files|downloads|desktop|[a-z] drive|[a-z] disk))?';
+    // "...from marvel studios folder in new volume f drive": drop the drive phrase (every drive is searched) and keep the folder as a hint
+    var tm = t, fh = '', DRV = / (?:from|in|inside|on|of|at) (?:the |my )?(?:(?:new volume|local disk|volume|drive|disk) )?[a-z] (?:drive|disk|volume)$| (?:from|in|inside|on|of|at) (?:the |my )?(?:drive|disk|volume) [a-z]$/, FLD = / (?:from|in|inside|of) (?:the |my )?(.{2,40}?) (?:folder|file|directory|collection)$/;
+    for (var z = 0; z < 3; z++) { if (DRV.test(tm)) tm = tm.replace(DRV, ''); else { var mf = tm.match(FLD); if (mf && !fh) { fh = mf[1]; tm = tm.replace(FLD, ''); } else break; } }
+    var HINT = fh ? '|' + fh : '';
     var yt1 = t.match(/^(?:open |go to |launch )?youtube(?: and| then)? (?:play|search(?: for)?|find|watch|put on)(?: me)?(?: the| a| some)? (.{2,100})$/) ||
               t.match(/^(?:play|watch|put on|search(?: for)?) (.{2,100}?) (?:on|in|from|at|using) youtube$/);
     if (yt1 && !/^(?:youtube|you tube)$/.test(yt1[1])) return act('ytplay', yt1[1]);
-    if ((m = t.match(new RegExp('^(?:play|watch|open|start|put on|run|show)(?: me)?(?: the| a| an| my| some)? (movie|film|video|episode|show|series|song|music|track|audio|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel|word)(?: called| named| titled| with the name)? (.{2,100}?)' + PCLOC + '$'))) && !/^(?:player|app|apps|library|folder|random|any|some)\b|^(?:random|any|some)$|(?:folder|settings|app|player)$/.test(m[2]))
-      return act('playfile', m[2], KMAP[m[1]]);
-    if ((m = t.match(/^(?:play|watch|put on|open|start|run|find|show me) (?:the |a |my )?(.{2,100}?) (movie|film|song|music video|video file|music file|video|song file|movie file|film file|audio file|audio|track|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel file|word file|pdf file|photo file|picture file|image file|document file)$/)) && !/ on youtube$/.test(t) && !/^(?:this|that|the|my|a|an|next|previous|prev|last|back|current|first|another)$/.test(m[1]) && !/^(?:random|any|some|good|new|old|latest|best)$/.test(m[1])) return act(/^(?:find|show me)$/.test(t.split(' ')[0]) || /^show me/.test(t) ? 'medialist' : 'playfile', m[1], m[2] === 'music video' ? 'video' : (KMAP[m[2].split(' ')[0]] || ''));
+    if ((m = tm.match(new RegExp('^(?:play|watch|open|start|put on|run|show)(?: me)?(?: the| a| an| my| some)? (movie|film|video|episode|show|series|song|music|track|audio|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel|word)(?: called| named| titled| with the name)? (.{2,100}?)' + PCLOC + '$'))) && !/^(?:player|app|apps|library|folder|random|any|some)\b|^(?:random|any|some)$|(?:folder|settings|app|player)$/.test(m[2]))
+      return act('playfile', m[2] + HINT, KMAP[m[1]]);
+    if ((m = tm.match(/^(?:play|watch|put on|open|start|run|find|show me) (?:the |a |my )?(.{2,100}?) (movie|film|song|music video|video file|music file|video|song file|movie file|film file|audio file|audio|track|file|photo|picture|image|pic|document|doc|pdf|spreadsheet|presentation|excel file|word file|pdf file|photo file|picture file|image file|document file)$/)) && !/ on youtube$/.test(t) && !/^(?:this|that|the|my|a|an|next|previous|prev|last|back|current|first|another)$/.test(m[1]) && !/^(?:random|any|some|good|new|old|latest|best)$/.test(m[1])) return act(/^(?:find|show me)$/.test(t.split(' ')[0]) || /^show me/.test(t) ? 'medialist' : 'playfile', m[1] + HINT, m[2] === 'music video' ? 'video' : (KMAP[m[2].split(' ')[0]] || ''));
     if ((m = t.match(/^(?:play|put on|start|shuffle)(?: me)? (?:some |any |a random |random |my )?(?:random )?(music|songs?|movies?|films?)(?: at random| randomly| for me)?$|^shuffle (?:my )?(music|songs)$|^surprise me with (?:a |some )?(music|song|movie|film)$/)) && (remote || /random|some|any|shuffle|surprise|my/.test(t))) {
       var rk = (m[1] || m[2] || m[3]); return act('playrandom', /movie|film/.test(rk) ? 'movie' : 'music');
     }
@@ -813,6 +1139,7 @@
     if (remote && /^scroll (up|down)$/.test(t)) return act('pckey', 'scroll' + t.match(/(up|down)$/)[1]);
     if (remote && /^(?:task view|show all windows|show (?:all )?open windows)$/.test(t)) return act('pckey', 'taskview');
     if (/^(?:sign out|log ?out|log off)(?: of)?(?: the| my)?(?: pc| computer| laptop| windows)?$/.test(t)) return act('logoff');
+    var bki = backupIntent(tm); if (bki) return bki;
     if (/^(?:empty|clear) (?:the )?(?:recycle bin|trash)$/.test(t)) return act('emptybin');
     if ((m = t.match(/^(?:close|quit|exit|kill) (?:the )?(.+?)(?: app| window| program)?$/)) && !/^(?:chat|settings|panel|menu|this|that|it|jarvis|routines?|conversation|window|tab)$/.test(m[1]))
       return act('close', m[1]);
@@ -831,16 +1158,17 @@
     if (!B || !B.linkState) { respond('The device link is not available in this version, ' + addrName() + '.'); return; }
     var st = linkState();
     if (!st.paired || !st.enabled) { respond('The device link is not set up yet, ' + addrName() + '. Open Settings, then Device Link.'); return; }
-    var fake = { type: li.type, arg: li.arg, arg2: li.arg2, confirmed: li.confirmed };
+    var fake = li.inner ? { type: li.inner.type, arg: li.inner.arg, arg2: li.inner.arg2, confirmed: li.confirmed } : { type: li.type, arg: li.arg, arg2: li.arg2, confirmed: li.confirmed };
     if (needsConfirm(fake)) {
-      askConfirm(confirmQuestion(fake).replace(/\?$/, ' on your ' + nm + '?'), function () { li.confirmed = true; runRemote(li); });
+      askConfirm(confirmQuestion(fake).replace(/\?$/, ' on your ' + nm + (li.whenText ? ' ' + li.whenText : '') + '?'), function () { li.confirmed = true; runRemote(li); });
       return;
     }
     setState('thinking'); pipeAct();
     var typing = addTyping();
     linkSend(li.type, li.arg, li.arg2, function (r) {
       typing.remove();
-      if (r.ok) respond(pick(LEADS) + ', ' + addrName() + '. ' + (r.msg || 'Done on your ' + nm + '.'));
+      if (r.ok && li.copyBack) { var cm = String(r.msg || '').match(/says: ([\s\S]*)$/); if (cm && B && B.copyText) { try { B.copyText(cm[1]); } catch (e) { /* ignore */ } respond('Copied it to this phone, ' + addrName() + ': ' + cm[1]); } else respond(r.msg || 'The PC clipboard is empty.'); }
+      else if (r.ok) respond(pick(LEADS) + ', ' + addrName() + '. ' + (r.msg || 'Done on your ' + nm + '.'));
       else respondError(r.msg || 'That failed on your ' + nm + '.', r.msg);
     });
   }
@@ -878,6 +1206,7 @@
   function localIntent(raw) {
     var t = norm(raw), m;
     if (!t) return null;
+    var lx = linkExtraIntent(t); if (lx) return lx;
     var rt = splitTarget(t);
     if (rt) return remoteIntent(rt);
     if (PC) { var pi = pcIntent(t); if (pi) return pi; }
@@ -1783,8 +2112,10 @@
       if (callMode && state === 'idle' && !settingsOpen && !handsFreeSuspended) startListening();
     },
     linkResult: function (d) { var cb = linkWait[d.id]; if (cb) { delete linkWait[d.id]; cb(d); } },
-    linkStatus: function (d) { linkOn = !!d.connected; var e = document.getElementById('link-status'); if (e) e.textContent = linkOn ? 'CONNECTED' : 'WAITING'; },
-    linkIn: function (d) { addMsg('act', '\ud83d\udce1 ' + (PC ? 'Phone' : 'PC') + ': ' + d.type + (d.arg ? ' ' + String(d.arg).slice(0, 60) : '') + ' \u2192 ' + (d.ok ? '\u2713' : '\u2715 ' + (d.msg || '')), true); },
+    linkStatus: function (d) { linkOn = !!d.connected; var e = document.getElementById('link-status'); if (e) e.textContent = linkOn ? 'CONNECTED' : 'WAITING'; if (!linkOn) noteOnline(null); updatePcChip(); },
+    shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
+    wakeResult: function (d) { respond(d.msg || (d.ok ? 'Done.' : 'That failed.')); if (d.ok) wakeWatch(); },
+    linkIn: function (d) { lkAdd({ t: Date.now(), d: 'in', ty: d.type, a: logArg(d.type, d.arg), ok: !!d.ok, m: String(d.msg || '').slice(0, 160) }); noteOnline(true); addMsg('act', '\ud83d\udce1 ' + (PC ? 'Phone' : 'PC') + ': ' + d.type + (d.arg ? ' ' + String(d.arg).slice(0, 60) : '') + ' \u2192 ' + (d.ok ? '\u2713' : '\u2715 ' + (d.msg || '')), true); },
     reminderFired: function (d) { addMsg('j', '\u23f0 ' + (d.label || 'Time is up') + ', ' + addrName() + '.'); },
     listenError: function (d) {
       var c = d.code;
@@ -2199,14 +2530,40 @@
       }));
       r3.appendChild(btn('SHOW PAIRING CODE', '', function () { var o = jp(B.linkCode()); if (o.ok) showCode(o.code); }));
       box.appendChild(r3);
+      var hh = el('div', 'dl-note', 'Health tools:'); box.appendChild(hh);
+      var testBox = el('div', 'st-box'), logBox = el('div', 'st-box');
+      function showLog() {
+        if (logBox.firstChild) { logBox.innerHTML = ''; return; }
+        testBox.innerHTML = '';
+        var pre = el('pre', 'rules'); pre.textContent = lkText(); logBox.appendChild(pre);
+        var lr = row(); lr.appendChild(btn('COPY LOG', '', function () { copyTxt(lkText()); })); lr.appendChild(btn('CLEAR LOG', 'danger', function () { store.set(LOGKEY, '[]'); pre.textContent = lkText(); toast('Log cleared'); })); logBox.appendChild(lr);
+      }
+      var r5 = row(); r5.style.flexWrap = 'wrap';
+      r5.appendChild(btn('RUN FULL CHECK', 'pri', function () { logBox.innerHTML = ''; runSelfTest(testBox); }));
+      r5.appendChild(btn('COMMAND LOG', '', showLog));
+      r5.appendChild(btn('COPY DIAGNOSTICS', '', function () { copyTxt(buildDiag()); }));
+      box.appendChild(r5); box.appendChild(testBox); box.appendChild(logBox);
+      if (!PC) {
+        var rj = row(); rj.style.flexWrap = 'wrap'; rj.appendChild(btn('SCHEDULED JOBS', '', function () { linkSend('joblist', '', '', function (d) { toast(d.msg, 8000); }); })); rj.appendChild(btn('CANCEL ALL JOBS', 'danger', function () { linkSend('jobdel', 'all', '', function (d) { toast(d.msg, 5000); }); })); box.appendChild(rj);
+        box.appendChild(el('div', 'dl-note', 'Wake the PC \u2014 works when this phone is on the same Wi-Fi as the PC. First time: with the PC on, tap LEARN FROM PC, then SET UP ON PC. Wake-on-LAN must also be enabled in the PC\u2019s BIOS.'));
+        var mac = inp('AA:BB:CC:DD:EE:FF'); mac.value = store.get('pcmac') || ''; box.appendChild(mac);
+        var rw = row(); rw.style.cssText = 'margin:8px 0 10px;flex-wrap:wrap';
+        rw.appendChild(btn('LEARN FROM PC', '', function () { linkSend('pcinfo', 'mac', '', function (d) { var a = macOf(d.msg); if (d.ok && a) { mac.value = a; store.set('pcmac', a); toast('Saved the PC address', 3000); } else toast(d.msg || 'Could not read it', 4200); }); }));
+        rw.appendChild(btn('SAVE', '', function () { var a = macOf(mac.value); if (!a) { toast('That is not a valid address', 3200); return; } mac.value = a; store.set('pcmac', a); toast('Saved', 2000); }));
+        rw.appendChild(btn('SET UP ON PC', '', function () { toast('Asking the PC\u2026', 2000); linkSend('wolsetup', '', '', function (d) { toast(d.msg, 7000); }); }));
+        rw.appendChild(btn('WAKE NOW', 'pri', function () { var a = macOf(mac.value) || store.get('pcmac'); if (!a) { toast('Enter or learn the PC address first', 3200); return; } store.set('pcmac', a); wakePcNow(); }));
+        box.appendChild(rw);
+      }
       var qh = el('div', 'dl-note', 'Quick controls for your ' + OTHER + ':'); box.appendChild(qh);
       var quick = PC
-        ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off']]
+        ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off'], ['RING PHONE', 'findphone', ''], ['STOP RING', 'stopring', '']]
         : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['RANDOM MUSIC', 'playrandom', 'music'], ['STOP PLAYER', 'stopmedia', ''], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
       var qr = el('div', 'row'); qr.style.cssText = 'margin:0 0 10px;flex-wrap:wrap';
       quick.forEach(function (q) { qr.appendChild(btn(q[0], '', function () { linkSend(q[1], q[2], '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), 3200); }); })); });
+      if (!PC) qr.appendChild(btn('TOUCHPAD', 'pri', function () { if (settingsOpen) closeSettings(); openTouchpad(); }));
+      if (!PC) qr.appendChild(btn('SEND CLIPBOARD', '', function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); }));
       box.appendChild(qr);
-      var r4 = row(); r4.appendChild(btn('UNPAIR', 'danger', function () { B.linkUnpair(); toast('Unpaired'); render(); })); box.appendChild(r4);
+      var r4 = row(); r4.appendChild(btn('UNPAIR', 'danger', function () { B.linkUnpair(); noteOnline(null); toast('Unpaired'); render(); })); box.appendChild(r4);
     }
     function showCode(code) {
       box.innerHTML = '';
@@ -2447,7 +2804,7 @@
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
       ['9 · Routines', '<p>Open <b>Settings › Conversations &amp; Commands › Routines</b> (or say “my routines”). Give a routine a name such as <b>good night</b> and write one command per line, for example “volume down”, “flashlight off”, “set an alarm for 7 am”. Then just say “good night” or “run good night”. Calls and messages are never run from a routine. Saying <b>leaving home</b> or <b>I am home</b> gives you a quick briefing with weather, battery and today’s reminders.</p>'],
       ['10 · Memory, safety and offline', '<ul><li>Say “remember my gym is at 6”, then ask “what is my gym time?”. Say “what do you remember” to see or delete everything.</li><li>Jarvis asks <b>yes / no</b> before sending a text or calling an emergency number. You can answer by voice. Change this in <b>Settings › Security</b>.</li><li>With no internet say “offline mode” to see what still works.</li></ul>'],
-      ['11 · Link to your PC', '<p>Control your PC from this phone, and this phone from your PC, with a free private link.</p><ol><li>Open <b>Settings › Device Link</b>. It shows every setup step and a <b>COPY RULES</b> button.</li><li>Create the link on one device and paste the pairing code on the other.</li><li>Tap <b>TEST LINK</b>, then say “on my PC open Chrome”.</li></ol><p>Examples: “on my PC play movie Spiderman”, “on my PC play song Shape of You”, “on my PC open YouTube and play Believer”, “on my PC stop the movie”.</p><p>Typing, calls and texts from the other device stay <b>off</b> until you switch them on. Everything is encrypted and only your two devices can read it.</p>'],
+      ['11 · Link to your PC', '<p>Control your PC from this phone, and this phone from your PC, with a free private link.</p><ol><li>Open <b>Settings › Device Link</b> and follow the steps (rules have a COPY button).</li><li>Create the link on one device, paste the pairing code on the other.</li><li>Tap <b>RUN FULL CHECK</b>, then say “on my PC open Chrome”.</li></ol><p>Also: “send this to my PC”, “wake my PC”, “at 11 pm shut down my PC”, “back up my documents”, “open the touchpad” (phone as a mouse), and “find my phone” (from the PC). Typing, calls and power stay <b>off</b> until you switch them on.</p>'],
       ['12 · Voice and language', '<p>In <b>Settings › Voice</b> choose the voice style, speed and language (English, Bangla or Hindi). Use <b>TEST ENGLISH</b> and the other test buttons to hear it. If a voice sounds wrong, install the language voice from your phone’s text-to-speech settings.</p>'],
       ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p>'],
       ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this phone and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p>'],
@@ -2549,7 +2906,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.22.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.24.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -2565,6 +2922,8 @@
     $('#boot').classList.add('out'); $('#app').classList.add('on');
     setTimeout(function () { Orb.resize(); }, 50); applyOrbStyle(S.orbStyle);
 
+    watchPc();
+    try { var shr = B && B.consumeShare ? B.consumeShare() : ''; if (shr) setTimeout(function () { shareToPc(shr); }, 1200); } catch (e) { /* ignore */ }
     var assist = '';
     try { assist = B ? B.consumeLaunchFlag() : ''; } catch (e) { /* ignore */ }
 

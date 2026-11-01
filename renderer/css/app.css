@@ -435,3 +435,27 @@ body::after{content:'';position:fixed;inset:0;z-index:5;pointer-events:none;
 pre.rules{margin:8px 0;padding:12px 14px;background:rgba(var(--cyrgb),.05);border:1px solid var(--line2);color:var(--cyhi);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.4;overflow-x:auto;white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text;max-width:100%;box-sizing:border-box}
 details.man .manb code{color:var(--cyhi);font-size:13px;word-break:break-all}
 details.man .manb .btn.sm,.btn.sm{display:inline-block;min-height:38px;padding:7px 14px;font-size:14px;margin:6px 0;opacity:1;pointer-events:auto}
+
+/* v1.23 link health */
+.pcc{display:inline-flex;align-items:center;padding:5px 8px}
+.pcc i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--mute);margin-right:5px;flex:none}
+.pcc.on i{background:#3ddc84;box-shadow:0 0 6px #3ddc84}
+.pcc.off i{background:#ff5a5a}
+.pcc.chk i{background:var(--am)}
+.st-box{margin:0 0 10px}
+.st-row{display:flex;gap:10px;align-items:flex-start;padding:8px 2px;border-bottom:1px solid var(--line)}
+.st-i{flex:none;width:20px;text-align:center;font-weight:700}
+.st-row.ok .st-i{color:var(--ok)}.st-row.warn .st-i{color:var(--am)}.st-row.bad .st-i{color:#ff5a5a}.st-row.chk .st-i,.st-row.skip .st-i{color:var(--mute)}
+.st-b{min-width:0;flex:1}
+.st-l{font-size:14.5px}
+.st-d{font-size:13px;line-height:1.35;color:var(--mute);overflow-wrap:anywhere}
+.st-row.bad .st-d{color:#ff8a8a}
+.st-sum{margin:10px 2px 0;padding:10px 12px;border-radius:10px;font-size:14.5px;border:1px solid var(--line)}
+.st-sum.ok{color:var(--ok)}.st-sum.warn{color:var(--am)}.st-sum.bad{color:#ff8a8a}
+
+/* v1.24 touchpad */
+.pad{height:34vh;min-height:200px;margin:4px 0 12px;border:1px solid var(--line2);border-radius:14px;background:rgba(var(--cyrgb),.05);display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;color:var(--mute);font-size:14px;touch-action:none;user-select:none;-webkit-user-select:none}
+.pad-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:8px;margin:0 0 10px}
+.pad-row.wrap{grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
+.pad-row .btn{padding:12px 6px;min-height:44px;font-size:13px}
+.pad-stat{min-height:20px;font-size:14px;color:var(--ok);margin:0 2px 8px}.pad-stat.bad{color:#ff8a8a}

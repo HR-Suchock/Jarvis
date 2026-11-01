@@ -48,6 +48,7 @@ function applyLink() {
   try { app.setLoginItemSettings({ openAtLogin: !!(c.autostart && app.isPackaged), args: ['--hidden'] }); } catch (e) { /* not supported */ }
   if (c.enabled && c.dbUrl && c.secret) relay.start(); else relay.stop();
   makeTray();
+  pushTiers();
 }
 
 
@@ -61,11 +62,38 @@ function getXWorker() {
   ['downloads', 'documents', 'desktop', 'pictures', 'music', 'videos'].forEach((n) => { try { paths[n] = app.getPath(n); } catch (e) { /* ignore */ } });
   // inside the packaged app the worker files live in app.asar.unpacked (see "asarUnpack" in package.json)
   const dir = __dirname.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-  xWorker = new Worker(path.join(dir, 'extra-worker.js'), { workerData: { paths } });
+  xWorker = new Worker(path.join(dir, 'extra-worker.js'), { workerData: { paths, userData: app.getPath('userData') } });
+  xWorker.on('message', (m) => {
+    if (!m || !m.rpc) return;
+    if (m.rpc === 'run') {
+      Promise.resolve().then(() => actions.run(String(m.type), String(m.arg || ''), String(m.arg2 || ''))).catch(() => ({ ok: false, msg: 'That did not work.' }))
+        .then((r) => { try { if (xWorker) xWorker.postMessage({ rpcRes: m.id, r: { ok: !!(r && r.ok), msg: String((r && r.msg) || '') } }); } catch (e) { /* worker gone */ } });
+    } else if (m.rpc === 'notify') {
+      try { if (linkCfg().enabled && relay) relay.send('notify', String(m.text || ''), '', 8000).catch(() => {}); } catch (e) { /* optional */ }
+    }
+  });
   xWorker.on('error', () => { xWorker = null; });
   xWorker.on('exit', () => { xWorker = null; });
   xWorker.unref();
+  pushTiers();
   return xWorker;
+}
+function pushTiers() {
+  try { const c = linkCfg(); if (xWorker) xWorker.postMessage({ tiers: { ctl: c.ctl === true, input: c.input === true, danger: c.danger === true } }); } catch (e) { /* ignore */ }
+}
+// Phone commands that need the worker's saved state (scheduled jobs, backups) go through here.
+const WORKER_REMOTE = { jobadd: 1, joblist: 1, jobdel: 1, backup: 1 };
+function runExtraAsync(type, arg, arg2) {
+  return new Promise((resolve) => {
+    try {
+      const { MessageChannel } = require('worker_threads');
+      const ch = new MessageChannel(); let done = false;
+      const fin = (r) => { if (done) return; done = true; try { ch.port1.close(); } catch (e) { /* ignore */ } resolve(r); };
+      ch.port1.once('message', (r) => fin(r && typeof r.msg === 'string' ? { ok: !!r.ok, msg: r.msg } : { ok: false, msg: 'That did not work.' }));
+      setTimeout(() => fin({ ok: false, msg: 'That took too long.' }), 60000).unref();
+      getXWorker().postMessage({ port: ch.port2, type, arg, arg2 }, [ch.port2]);
+    } catch (e) { resolve({ ok: false, msg: 'That did not work.' }); }
+  });
 }
 function runExtraSync(type, arg, arg2) {
   try {
@@ -80,22 +108,32 @@ function runExtraSync(type, arg, arg2) {
   } catch (e) { return { ok: false, msg: 'That did not work.' }; }
 }
 
-const recent = [];
+const recent = [], mouseRecent = [];
+let lastMouseNote = 0;
 async function onRemote(cmd) {
   const c = linkCfg();
   const now = Date.now();
-  while (recent.length && now - recent[0] > 60000) recent.shift();
-  if (recent.length >= 30) return { ok: false, msg: 'Too many commands in a minute — slow down.' };
-  recent.push(now);
+  const isMouse = cmd.type === 'mouse';             // touchpad moves arrive many times a second: own, higher limit
+  if (isMouse) {
+    while (mouseRecent.length && now - mouseRecent[0] > 1000) mouseRecent.shift();
+    if (mouseRecent.length >= 120) return { ok: false, msg: 'Too fast.' };
+    mouseRecent.push(now);
+  } else {
+    while (recent.length && now - recent[0] > 60000) recent.shift();
+    if (recent.length >= 30) return { ok: false, msg: 'Too many commands in a minute — slow down.' };
+    recent.push(now);
+  }
   const tier = TIERS[cmd.type];
   if (!tier) return { ok: false, msg: 'I cannot do “' + cmd.type.slice(0, 30) + '” on the PC.' };
   if (!c.enabled) return { ok: false, msg: 'The device link is switched off on the PC.' };
   if (tier === 'ctl' && !c.ctl) return { ok: false, msg: 'Remote control is switched off on the PC. Turn it on in Settings → Device Link.' };
   if (tier === 'input' && !c.input) return { ok: false, msg: 'Typing and keyboard control from the phone is switched off on the PC. Turn it on in Settings → Device Link.' };
   if (tier === 'danger' && !c.danger) return { ok: false, msg: 'Power commands from the phone are switched off on the PC. Turn them on in Settings → Device Link.' };
-  if (tier !== 'ctl') notify('Jarvis — command from your phone', cmd.type + (cmd.arg ? ': ' + cmd.arg.slice(0, 80) : ''));
-  const r = extra.handles(cmd.type) ? await extra.run(cmd.type, cmd.arg, cmd.arg2) : actions.run(cmd.type, cmd.arg, cmd.arg2);
-  emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
+  if (isMouse) { if (now - lastMouseNote > 60000) { lastMouseNote = now; notify('Jarvis — touchpad from your phone', 'The phone is controlling the mouse and keyboard.'); } }
+  else if (tier !== 'ctl') notify('Jarvis — command from your phone', cmd.type + (cmd.arg ? ': ' + cmd.arg.slice(0, 80) : ''));
+  const r = WORKER_REMOTE[cmd.type] ? await runExtraAsync(cmd.type, cmd.arg, cmd.arg2)
+    : extra.handles(cmd.type) ? await extra.run(cmd.type, cmd.arg, cmd.arg2) : actions.run(cmd.type, cmd.arg, cmd.arg2);
+  if (!isMouse) emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
   return r;
 }
 
@@ -278,6 +316,7 @@ app.whenReady().then(() => {
   refreshDisk(); setInterval(refreshDisk, 120000);
   createWindow(process.argv.includes('--hidden') && linkCfg().enabled);
   applyLink();
+  try { getXWorker(); } catch (e) { /* scheduler is optional */ }
   setTimeout(() => { try { getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);
 });
 

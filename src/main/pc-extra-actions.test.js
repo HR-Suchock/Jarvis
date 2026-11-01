@@ -42,5 +42,13 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   ck('user text only via env', calls.every(c => !/hello world|Remove-Item/.test(c.args.join(' '))));
   // not windows
   const l = make({ exec, platform: 'linux' }); r = await l.run('pckey', 'refresh'); ck('non-windows message', !r.ok && /only works on Windows/.test(r.msg), r);
+  // ---- v1.23.0
+  r = await e.run('pcinfo', 'time'); ck('time', r.ok && /epoch \d{10,}/.test(r.msg), r);
+  r = await e.run('pclink', 'https://example.com/a?b=1'); ck('pclink opens', r.ok && opened[opened.length - 1] === 'https://example.com/a?b=1', r);
+  r = await e.run('pclink', 'javascript:alert(1)'); ck('pclink refuses non-http', !r.ok, r);
+  r = await e.run('pclink', 'file:///c:/windows/system32/cmd.exe'); ck('pclink refuses file:', !r.ok, r);
+  r = await e.run('pclink', 'https://a.com/ & calc'); ck('pclink refuses spaces', !r.ok, r);
+  ck('v1.23 tiers', e.tier('pclink') === 'ctl' && e.tier('wolsetup') === 'ctl' && e.handles('wolsetup'));
+  r = await e.run('wolsetup'); ck('wolsetup answers', typeof r.msg === 'string' && r.msg.length > 10, r);
   console.log('bad', bad); process.exit(bad ? 1 : 0);
 })();

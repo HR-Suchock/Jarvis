@@ -9,6 +9,7 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   mk('Music/Ed Sheeran - Shape of You.mp3'); mk('Music/Arijit Singh/Tum Hi Ho.mp3'); mk('Music/Imagine Dragons - Believer (Official Audio).m4a'); mk('Downloads/random notes.txt'); mk('Music/ReadMe.exe');
   mk('Videos/Spiderman.2002.1080p.BluRay.x264.mkv', BIG); mk('Videos/Movies/The Dark Knight (2008).mp4', BIG); mk('Videos/funny cat clip.mp4', 3 * 1024 * 1024); mk('Desktop/Interstellar.2014.720p.mkv', BIG);
   mk('Pictures/Beach Holiday 2023.jpg', 300 * 1024); mk('Pictures/tiny icon.png', 2 * 1024); mk('Documents/CV Suchock.pdf'); mk('Documents/Budget 2024.xlsx'); mk('D_drive/Photos/Eid Family.JPG', 500 * 1024); mk('Downloads/setup.exe'); mk('Downloads/run.bat'); mk('Downloads/script.ps1'); mk('Downloads/link.lnk');
+  mk('F_drive/Marvel Studios/Iron Man (2008).mkv', BIG); mk('F_drive/Marvel Studios/Iron Man 2 (2010).mkv', BIG); mk('F_drive/Marvel Studios/The Avengers (2012).mkv', BIG); mk('F_drive/Cartoons/Iron Man Armored Adventures S01E01.mkv', BIG);
   fs.mkdirSync(path.join(root, 'Music/node_modules'), { recursive: true }); fs.writeFileSync(path.join(root, 'Music/node_modules/hidden song.mp3'), '');
   const g = (n) => path.join(root, { downloads: 'Downloads', documents: 'Documents', desktop: 'Desktop', pictures: 'Pictures', music: 'Music', videos: 'Videos' }[n]);
   const opened = [], urls = [], calls = [];
@@ -16,7 +17,8 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   const exec = (file, args, opts, cb) => { calls.push({ file, args, env: opts.env }); const s = args[args.length - 1] || ''; cb(null, /Stop-Process/.test(s) ? (opts.env.__none ? '0' : '2') : 'ok', ''); };
   let html = '<html>..."videoRenderer":{"videoId":"dQw4w9WgXcQ","thumbnail":{},"title":{"runs":[{"text":"Rick \\"Never\\" Gonna Give You Up"}]}...</html>';
   const fetched = [];
-  const e = make({ exec, platform: 'win32', shell, getPath: g, mediaRoots: [path.join(root, 'D_drive')], fetchText: async (u) => { fetched.push(u); if (html === 'THROW') throw new Error('net'); return html; }, random: () => 0 });
+  let statCalls = 0; const realStat = fs.promises.stat; fs.promises.stat = function () { statCalls++; return realStat.apply(this, arguments); };
+  const e = make({ exec, platform: 'win32', shell, getPath: g, mediaRoots: [path.join(root, 'D_drive'), path.join(root, 'F_drive')], fetchText: async (u) => { fetched.push(u); if (html === 'THROW') throw new Error('net'); return html; }, random: () => 0 });
   for (const t of ['playfile', 'playany', 'playrandom', 'ytplay', 'medialist', 'openfolder']) ck('tier ctl ' + t, e.tier(t) === 'ctl');
   ck('tier input stopmedia', e.tier('stopmedia') === 'input');
   let r = await e.run('playfile', 'shape of you', 'music'); ck('song by name', r.ok && /Shape of You/.test(r.msg) && /Shape of You/.test(opened.pop()), r);
@@ -66,6 +68,17 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   r = await e.run('playany', 'beach holiday'); ck('playany does not open photos', r.ok && /YouTube/.test(r.msg), r);
   r = await e.run('openfolder', 'drive:Q'); ck('missing drive reported', !r.ok && /cannot find drive Q/.test(r.msg), r);
   r = await e.run('openfolder', 'drive:..'); ck('bad drive arg refused', !r.ok);
+  // folder hint + lazy stat (performance)
+  r = await e.run('playfile', 'iron man|marvel studios', 'movie'); ck('folder hint picks the Marvel Studios copy', r.ok && /Iron Man \(?2008/.test(r.msg) || (r.ok && /Iron Man/.test(r.msg) && !/Armored/.test(r.msg)), r);
+  r = await e.run('playfile', 'avengers|marvel', 'movie'); ck('hint partial word', r.ok && /Avengers/.test(r.msg), r);
+  r = await e.run('playfile', 'armored adventures', 'movie'); ck('other folder still found', r.ok && /Armored/.test(r.msg), r);
+  r = await e.run('playfile', 'marvel studios', ''); ck('folder name alone opens that folder', r.ok && /Opened the Marvel Studios folder/.test(r.msg) && /Marvel Studios$/.test(opened[opened.length - 1]), r);
+  r = await e.run('playfile', 'iron man|dc comics', 'movie'); ck('wrong folder hint still finds something (lower rank)', r.ok, r);
+  r = await e.run('medialist', 'iron man|marvel studios', 'movie'); ck('list with hint', r.ok && /Iron Man/.test(r.msg), r);
+  const before = statCalls; const fresh = make({ exec, platform: 'win32', shell, getPath: g, mediaRoots: [path.join(root, 'F_drive')] });
+  await fresh.refreshMediaIndex(); ck('indexing does not stat() every file', statCalls === before, { before, after: statCalls });
+  const b2 = statCalls; await fresh.run('playfile', 'iron man', 'movie'); ck('only the top matches are stat()ed', statCalls - b2 <= 25, statCalls - b2);
+  fs.promises.stat = realStat;
   ck('scoring sanity', e.score('batman', 'spiderman 2002') < 45 && e.score('shape of you', 'ed sheeran shape of you') >= 80);
   fs.rmSync(root, { recursive: true, force: true });
   console.log('bad', bad); process.exit(bad ? 1 : 0);
