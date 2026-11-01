@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   setPref: (k, v) => sync('pref:set', k, v),
   wipe: () => sync('wipe'),
   action: (t, a, b) => sync('action', t, a, b),
+  actionAsync: (t, a, b) => ipcRenderer.invoke('action:async', t, a, b),
   sysInfo: () => sync('sysinfo'),
   appInfo: () => sync('appinfo'),
   reportBattery: (b) => ipcRenderer.send('battery', b),

@@ -208,6 +208,11 @@ function wireIpc() {
     t = String(t); a = String(a == null ? '' : a); b = String(b == null ? '' : b);
     e.returnValue = JSON.stringify(extra.handles(t) ? runExtraSync(t, a, b) : actions.run(t, a, b));
   });
+  // non-blocking twin of 'action': the window keeps responding while a drive scan / PowerShell command runs
+  handle('action:async', async (e, t, a, b) => {
+    t = String(t); a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+    try { return extra.handles(t) ? await runExtraAsync(t, a, b) : actions.run(t, a, b); } catch (err) { return { ok: false, msg: 'That did not work.' }; }
+  });
   on('sysinfo', (e) => {
     const total = os.totalmem(), free = os.freemem();
     const o = { ramPct: Math.round(100 - free * 100 / total), ramUsedMB: Math.round((total - free) / 1048576), ramTotalMB: Math.round(total / 1048576), uptimeMin: Math.floor(os.uptime() / 60) };

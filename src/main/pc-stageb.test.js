@@ -60,3 +60,16 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   const eL = make({ exec, platform: 'linux' }); r = await eL.run('mouse', 'click', 'l'); ck('non-windows message', !r.ok && /Windows/.test(r.msg), r);
   e.stopScheduler(); console.log(bad ? 'FAILED ' + bad : 'ALL OK');
 })();
+// ---- v1.24.1: saved index (second launch needs no scan)
+(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jvx-')), lib = path.join(dir, 'Movies'); fs.mkdirSync(lib); fs.writeFileSync(path.join(lib, 'Iron Man 1.mp4'), 'x');
+  const cf = path.join(dir, 'idx.json'); let bad2 = 0; const ck2 = (n, c, x) => { if (!c) { bad2++; console.log('FAIL', n, JSON.stringify(x)); } else console.log('ok  ', n); };
+  const a = make({ platform: 'win32', getPath: () => '', mediaRoots: [lib], cacheFile: cf, exec: (f, ar, o, cb) => cb(null, '', '') });
+  let r = await a.run('medialist', 'iron man', 'movie'); ck2('first run finds file', /Iron Man/i.test(r.msg) || /found 1/.test(r.msg), r);
+  ck2('index saved to disk', fs.existsSync(cf) && /Iron Man/i.test(fs.readFileSync(cf, 'utf8')));
+  const orig = fs.promises.readdir; let scans = 0; fs.promises.readdir = function () { scans++; return orig.apply(this, arguments); };
+  const b = make({ platform: 'win32', getPath: () => '', mediaRoots: [], cacheFile: cf, exec: (f, ar, o, cb) => cb(null, '', '') });
+  r = await b.run('medialist', 'iron man', 'movie'); fs.promises.readdir = orig;
+  ck2('second launch answers from saved index without scanning', scans === 0 && /Iron Man/i.test(r.msg + ''), { scans, r });
+  console.log(bad2 ? 'FAILED2 ' + bad2 : 'ALL OK 2');
+})();

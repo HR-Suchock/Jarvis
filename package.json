@@ -1,6 +1,6 @@
 {
   "name": "jarvis-pc",
-  "version": "1.24.0",
+  "version": "1.24.1",
   "description": "J.A.R.V.I.S for Windows",
   "main": "src/main/main.js",
   "author": "MD Humayun Rashid Suchock",

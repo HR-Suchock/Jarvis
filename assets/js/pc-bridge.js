@@ -137,6 +137,8 @@
     setPref: function (k, v) { P.setPref(k, v); },
     wipeAll: function () { P.wipe(); },
     action: function (t, a, b) { return P.action(t, a, b); },
+    // async twin used by the PC window so a slow command (first drive scan, PowerShell) never freezes the app
+    actionAsync: function (t, a, b) { if (P.actionAsync) return P.actionAsync(t, a, b); try { return Promise.resolve(JSON.parse(P.action(t, a, b))); } catch (e) { return Promise.resolve({ ok: false, msg: 'That action failed.' }); } },
     appInfo: function () { return P.appInfo(); },
     permissions: function () { return J({ mic: true, call: true, contacts: true, access: true, accessStalled: false, ball: false, accessWas: true, battery: true, overlay: true }); },
     requestPermissions: function () {

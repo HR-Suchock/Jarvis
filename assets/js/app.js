@@ -1620,7 +1620,18 @@
       return;
     }
     if (needsConfirm(li)) { askConfirm(confirmQuestion(li), function () { li.confirmed = true; runLocal(li, userText); }); return; }
-    var r = doAction(li.type, li.arg, li.arg2);
+    if (PC && B && B.actionAsync) { pcActionAsync(li); return; }     // PC: never block the window while a drive scan or PowerShell runs
+    finishLocal(li, doAction(li.type, li.arg, li.arg2));
+  }
+  function pcActionAsync(li) {
+    setState('thinking'); pipeAct();
+    var typing = addTyping(), searchy = /^(?:play|medialist|openfolder|ytplay)/.test(li.type);
+    var slow = setTimeout(function () { if (searchy) addMsg('act', '\ud83d\udd0d Searching your drives\u2026 the very first search after starting Jarvis can take a minute.', true); }, 1800);
+    var done = false;
+    function fin(r) { if (done) return; done = true; clearTimeout(slow); typing.remove(); finishLocal(li, r && typeof r.msg === 'string' ? r : { ok: false, msg: 'That action failed.' }); }
+    try { B.actionAsync(li.type, li.arg || '', li.arg2 || '').then(fin, function () { fin(null); }); } catch (e) { fin(null); }
+  }
+  function finishLocal(li, r) {
     if (li.mute && r.ok) { addMsg('act', (li.type === 'swipe' ? '\u21d5 ' : '\u2195 ') + (li.arg || li.type) + (li.arg2 ? ' ' + li.arg2 : ''), true); setState('idle'); setTimeout(afterReply, 120); return; }
     if (!r.ok && li.type === 'open' && /\.[a-z]{2,}$/.test(li.arg)) r = doAction('url', li.arg);
     var reply;

@@ -193,10 +193,36 @@ function make(deps) {
     }
     return out;
   }
-  async function getIndex(force) {
-    if (!force && index && Date.now() - indexAt < 600000) return index;
-    if (!indexing) indexing = buildIndex().then((r) => { index = r; indexAt = Date.now(); indexing = null; return r; }, (e) => { indexing = null; throw e; });
+  // The index is saved to disk (deps.cacheFile) so only the very first search after installing is slow. A saved index is
+  // used immediately and refreshed quietly in the background (stale-while-revalidate).
+  const cacheFile = deps.cacheFile || (deps.userData ? path.join(deps.userData, 'jarvis-media-index.json') : '');
+  let cacheTried = false;
+  function loadCache() {
+    cacheTried = true;
+    try {
+      if (!cacheFile) return false;
+      const st = fs.statSync(cacheFile); if (Date.now() - st.mtimeMs > 14 * 86400000) return false;
+      const j = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (!j || j.v !== 1 || !Array.isArray(j.f)) return false;
+      index = j.f.map((a) => ({ p: a[0], key: a[1], ctx: a[2], kind: a[3], size: -1, mtime: -1 }));
+      indexAt = st.mtimeMs; return true;
+    } catch (e) { return false; }
+  }
+  function saveCache(list) {
+    try { if (cacheFile && list.length && list.length <= MAX_FILES) { const tmp = cacheFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ v: 1, f: list.map((f) => [f.p, f.key, f.ctx, f.kind]) })); fs.renameSync(tmp, cacheFile); } } catch (e) { /* optional */ }
+  }
+  function startBuild() {
+    if (!indexing) indexing = buildIndex().then((r) => { index = r; indexAt = Date.now(); indexing = null; saveCache(r); return r; }, (e) => { indexing = null; throw e; });
     return indexing;
+  }
+  async function getIndex(force) {
+    if (!cacheTried && !index) loadCache();
+    if (force) return startBuild();
+    if (index) {
+      if (Date.now() - indexAt > 600000) startBuild().catch(() => {});       // refresh quietly; answer from what we have right now
+      return index;
+    }
+    return startBuild();
   }
   function pool(idx, kind) {
     if (kind === 'music') return idx.filter((f) => f.kind === 'music');
@@ -538,7 +564,7 @@ function make(deps) {
       if (LATEST.test(name)) { best = (await newest(idx, kind, 1))[0] || null; }
       else {
         let hits = await rank(idx, raw, kind);
-        if (!hits.length) { idx = await getIndex(true); hits = await rank(idx, raw, kind); }     // maybe a brand-new file
+        if (!hits.length && Date.now() - indexAt > 120000) { idx = await getIndex(true); hits = await rank(idx, raw, kind); }     // maybe a brand-new file
         best = hits.length ? hits[0].f : null;
       }
       if (!best && kind === '' && !LATEST.test(name)) {                 // "open marvel studios file" = the user named a folder: open it

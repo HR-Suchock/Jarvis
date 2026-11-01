@@ -5,7 +5,7 @@ Electron app that runs the same Jarvis UI as the phone app, in a normal resizabl
 ## Get the .exe without a strong PC (GitHub builds it)
 1. Create a repository on github.com and upload everything in this folder.
 2. **Actions -> Build Jarvis for Windows -> Run workflow** (about 5 minutes).
-3. Download **Jarvis-Windows** from the run: `Jarvis-Setup-1.24.0.exe` — the only file; run it to install Jarvis (it has its own install wizard).
+3. Download **Jarvis-Windows** from the run: `Jarvis-Setup-1.24.1.exe` — the only file; run it to install Jarvis (it has its own install wizard).
 
 ## Or build locally (Windows, Node.js 20+)
 ```
