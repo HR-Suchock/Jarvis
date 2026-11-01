@@ -13,7 +13,13 @@ function rpc(kind, payload) {
     setTimeout(() => { if (pending.delete(id)) resolve({ ok: false, msg: 'The PC did not answer.' }); }, 60000).unref();
   });
 }
+// the worker has no Electron 'shell', so opening files/links is asked of the main process (opens with the default app, no PowerShell start-up)
+const shell = {
+  openPath: async (p) => { const r = await rpc('openpath', { p: String(p) }); return r && r.ok ? '' : 'failed'; },
+  openExternal: async (u) => { const r = await rpc('openext', { u: String(u) }); if (!(r && r.ok)) throw new Error('failed'); },
+};
 const extra = require('./pc-extra-actions')({
+  shell,
   getPath: (n) => (workerData.paths && workerData.paths[n]) || '',
   userData: workerData.userData,
   run: (type, arg, arg2) => rpc('run', { type, arg, arg2 }),

@@ -2917,7 +2917,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.24.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.24.1' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3015,6 +3015,7 @@
     setState('idle');
     buildChips();
     updateProviderChip();
+    if (!PC) { var ck0 = $('#clock'); if (ck0) ck0.style.display = 'none'; }      // the phone's own status bar already shows the time
     tickClock(); setInterval(tickClock, 20000);
     restoreHistory();
     setTimeout(sysSample, 1500);
@@ -3043,7 +3044,7 @@
     textEl.addEventListener('input', function () { sendEl.classList.toggle('on', !!textEl.value.trim()); });
     textEl.addEventListener('focus', function () { setTimeout(scrollLog, 300); });
     $('#btn-settings').addEventListener('click', function () { haptic(); openSettings(); });
-    $('#provider-chip').addEventListener('click', openSettings);
+    $('#provider-chip').addEventListener('click', function () { openSettings(); if (showSettingsPage) showSettingsPage('NEURAL LINK'); });     // straight to the AI providers
     $('#set-back').addEventListener('click', settingsBack);
 
     runBoot();

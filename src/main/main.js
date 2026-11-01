@@ -68,6 +68,20 @@ function getXWorker() {
     if (m.rpc === 'run') {
       Promise.resolve().then(() => actions.run(String(m.type), String(m.arg || ''), String(m.arg2 || ''))).catch(() => ({ ok: false, msg: 'That did not work.' }))
         .then((r) => { try { if (xWorker) xWorker.postMessage({ rpcRes: m.id, r: { ok: !!(r && r.ok), msg: String((r && r.msg) || '') } }); } catch (e) { /* worker gone */ } });
+    } else if (m.rpc === 'openpath' || m.rpc === 'openext') {
+      const reply = (ok) => { try { if (xWorker) xWorker.postMessage({ rpcRes: m.id, r: { ok, msg: '' } }); } catch (e) { /* worker gone */ } };
+      try {
+        if (m.rpc === 'openpath') {
+          const p = String(m.p || '');
+          // only real files/folders by absolute path, never programs or scripts
+          if (!path.isAbsolute(p) || /\.(?:exe|bat|cmd|com|scr|ps1|psm1|vbs|vbe|js|jse|wsf|msi|msp|lnk|reg|hta|jar|dll|cpl)$/i.test(p)) { reply(false); return; }
+          shell.openPath(p).then((err) => reply(!err), () => reply(false));
+        } else {
+          const u = String(m.u || '');
+          if (!/^https?:\/\/[^\s]{3,2000}$/i.test(u) && !/^ms-settings:[a-z-]+$/i.test(u)) { reply(false); return; }
+          shell.openExternal(u).then(() => reply(true), () => reply(false));
+        }
+      } catch (e) { reply(false); }
     } else if (m.rpc === 'notify') {
       try { if (linkCfg().enabled && relay) relay.send('notify', String(m.text || ''), '', 8000).catch(() => {}); } catch (e) { /* optional */ }
     }

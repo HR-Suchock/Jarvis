@@ -267,7 +267,7 @@ function make(deps) {
   const pretty = (f) => clip(path.basename(f.p, path.extname(f.p)).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim(), 70);
   async function openFile(f) {
     try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(f.p); return !e; } } catch (e) { /* fall back */ }
-    const r = await ps('Start-Process -LiteralPath $env:JARVIS_FILE', { JARVIS_FILE: f.p }); return r.ok;
+    const r = await ps('Invoke-Item -LiteralPath $env:JARVIS_FILE', { JARVIS_FILE: f.p }); return r.ok;
   }
 
   // ---------------------------------------------------------------- YouTube: find the first real video and open it
@@ -570,7 +570,7 @@ function make(deps) {
       if (!best && kind === '' && !LATEST.test(name)) {                 // "open marvel studios file" = the user named a folder: open it
         const q = norm(name).split(' ').filter(Boolean);
         const hit = q.length ? idx.find((f) => { const d = norm(path.basename(path.dirname(f.p))); return d === q.join(' ') || (q.length > 1 ? q.every((t) => d.indexOf(t) >= 0) : false); }) : null;
-        if (hit) { const dir = path.dirname(hit.p); try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(dir); if (!e) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); } } catch (e2) { /* fall back */ } const r2 = await ps('Start-Process -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: dir }); if (r2.ok) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); }
+        if (hit) { const dir = path.dirname(hit.p); try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(dir); if (!e) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); } } catch (e2) { /* fall back */ } const r2 = await ps('Invoke-Item -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: dir }); if (r2.ok) return R(true, 'Opened the ' + path.basename(dir) + ' folder.'); }
       }
       if (!best) return R(false, 'I could not find ' + (LATEST.test(name) ? 'any ' + PLURAL[kind] : 'a ' + NOUN[kind] + ' called ' + clip(name, 50)) + ' on this PC.');
       return (await openFile(best)) ? R(true, verb + ' ' + pretty(best) + '.') : R(false, 'I found ' + pretty(best) + ' but could not open it.');
@@ -613,7 +613,7 @@ function make(deps) {
         const root = dm[1].toUpperCase() + ':\\';
         try { if (!fs.statSync(root).isDirectory()) throw new Error('x'); } catch (e) { return R(false, 'I cannot find drive ' + dm[1].toUpperCase() + ' on this PC.'); }
         try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(root); return e ? R(false, 'I could not open drive ' + dm[1].toUpperCase() + '.') : R(true, 'Opened drive ' + dm[1].toUpperCase() + '.'); } } catch (e) { /* fall back */ }
-        const r = await ps('Start-Process -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: root });
+        const r = await ps('Invoke-Item -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: root });
         return r.ok ? R(true, 'Opened drive ' + dm[1].toUpperCase() + '.') : fail(r, 'I could not open that drive.');
       }
       if (key === 'recycle bin') { const r = await ps('Start-Process explorer.exe -ArgumentList "shell:RecycleBinFolder"'); return r.ok ? R(true, 'Opened the recycle bin.') : fail(r, 'I could not open the recycle bin.'); }
@@ -622,7 +622,7 @@ function make(deps) {
       let dir = ''; try { dir = g(name); } catch (e) { /* ignore */ }
       if (!dir) return R(false, 'I could not find that folder.');
       try { if (deps.shell && deps.shell.openPath) { const e = await deps.shell.openPath(dir); return e ? R(false, 'I could not open that folder.') : R(true, 'Opened the ' + key + ' folder.'); } } catch (e) { /* fall back */ }
-      const r = await ps('Start-Process -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: dir });
+      const r = await ps('Invoke-Item -LiteralPath $env:JARVIS_DIR', { JARVIS_DIR: dir });
       return r.ok ? R(true, 'Opened the ' + key + ' folder.') : fail(r, 'I could not open that folder.');
     },
     async stopmedia() {
