@@ -57,6 +57,13 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   r = await e.run('mouse', 'key', '$(calc)'); ck('injection refused', !r.ok && !/calc/.test(writes.join('')));
   r = await e.run('mouse', 'zap', ''); ck('unknown action refused', !r.ok);
   ck('one helper reused', spawned === 1, spawned);
+  ck('remap volume up', JSON.stringify(e.remap('volume', 'up')) === '{"type":"mediakey","arg":"volup","arg2":"5"}');
+  ck('remap media play', e.remap('media', 'play').arg === 'playpause' && e.remap('media', 'previous').arg === 'prev' && e.remap('volume', 'mute').arg === 'mute');
+  ck('remap leaves numbers/others alone', e.remap('volume', '40') === null && e.remap('volume', 'max') === null && e.remap('open', 'x') === null && e.remap('media', 'zzz') === null);
+  r = await e.run('mediakey', 'volup', '5'); const wv = writes[writes.length - 1]; ck('mediakey volup x5', r.ok && (wv.match(/k 175 0/g) || []).length === 5 && (wv.match(/k 175 2/g) || []).length === 5, wv);
+  r = await e.run('mediakey', 'playpause', '1'); ck('mediakey playpause', r.ok && /k 179 0\nk 179 2/.test(writes[writes.length - 1]));
+  r = await e.run('mediakey', 'format', '1'); ck('mediakey unknown refused', !r.ok);
+  ck('mediakey tier ctl', e.tier('mediakey') === 'ctl');
   const eL = make({ exec, platform: 'linux' }); r = await eL.run('mouse', 'click', 'l'); ck('non-windows message', !r.ok && /Windows/.test(r.msg), r);
   e.stopScheduler(); console.log(bad ? 'FAILED ' + bad : 'ALL OK');
 })();

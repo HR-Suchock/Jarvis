@@ -30,7 +30,7 @@ const TIER = {
   // v1.23.0
   pclink: 'ctl', wolsetup: 'ctl',
   // v1.24.0
-  jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input',
+  jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input', mediakey: 'ctl',
   logoff: 'danger', emptybin: 'danger',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
@@ -376,7 +376,15 @@ function make(deps) {
   const MOUSE_PS = "Add-Type -Name M -Namespace J -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f,int dx,int dy,int d,UIntPtr e); [DllImport(\"user32.dll\")] public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);'; " +
     "while (($l = [Console]::In.ReadLine()) -ne $null) { $p = $l.Split(' '); try { if ($p[0] -eq 'e') { [J.M]::mouse_event([uint32]$p[1],[int]$p[2],[int]$p[3],[int]$p[4],[UIntPtr]::Zero) } elseif ($p[0] -eq 'k') { [J.M]::keybd_event([byte]$p[1],0,[uint32]$p[2],[UIntPtr]::Zero) } } catch { } }";
   const MKEYS = { enter: 0x0D, backspace: 0x08, esc: 0x1B, tab: 0x09, space: 0x20, delete: 0x2E, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,
-    left: 0x25, up: 0x26, right: 0x27, down: 0x28, win: 0x5B, f5: 0x74, f11: 0x7A, volup: 0xAF, voldown: 0xAE, mute: 0xAD, next: 0xB0, prev: 0xB1, playpause: 0xB3 };
+    left: 0x25, up: 0x26, right: 0x27, down: 0x28, win: 0x5B, f5: 0x74, f11: 0x7A, volup: 0xAF, voldown: 0xAE, mute: 0xAD, next: 0xB0, prev: 0xB1, playpause: 0xB3, stop: 0xB2 };
+  const MEDIAKEY_SAY = { volup: 'Volume up.', voldown: 'Volume down.', mute: 'Mute toggled.', playpause: 'Play / pause.', next: 'Next track.', prev: 'Previous track.', stop: 'Stopped.' };
+  // volume/media commands are sent as real key presses (works on every Windows PC); the PowerShell audio route failed silently on some
+  function remap(type, arg) {
+    const a = String(arg || '').toLowerCase().trim();
+    if (type === 'volume') { if (a === 'up' || a === 'louder') return { type: 'mediakey', arg: 'volup', arg2: '5' }; if (a === 'down' || a === 'quieter') return { type: 'mediakey', arg: 'voldown', arg2: '5' }; if (a === 'mute') return { type: 'mediakey', arg: 'mute', arg2: '1' }; }
+    if (type === 'media') { const k = { play: 'playpause', pause: 'playpause', resume: 'playpause', toggle: 'playpause', next: 'next', previous: 'prev', stop: 'stop' }[a]; if (k) return { type: 'mediakey', arg: k, arg2: '1' }; }
+    return null;
+  }
   let helper = null, helperIdle = null;
   function helperWrite(lines) {
     if (platform !== 'win32') return WINMSG;
@@ -494,6 +502,14 @@ function make(deps) {
         });
       } catch (e) { backupBusy = false; return R(false, 'I could not start the backup.'); }
       return R(true, 'Backup of ' + name + ' started to ' + dest + '. Files are only copied, never deleted. I will tell your phone when it is done.');
+    },
+    async mediakey(arg, arg2) {
+      const k = String(arg || '').toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(MEDIAKEY_SAY, k)) return R(false, 'I do not know that media key.');
+      const n = int(arg2, 1, 10) || 1; let lines = [];
+      for (let i = 0; i < n; i++) lines = lines.concat(press(MKEYS[k]));
+      const err = helperWrite(lines);
+      return err ? R(false, err) : R(true, MEDIAKEY_SAY[k]);
     },
     async mouse(arg, arg2) {
       const a = String(arg || '').toLowerCase(), d = String(arg2 || '');
@@ -644,6 +660,7 @@ function make(deps) {
 
   return {
     TIER, SETTINGS, KEYS, score, nameKey,
+    remap,
     startScheduler() { ensureScheduler(); }, stopScheduler() { clearInterval(schedTimer); schedTimer = null; try { if (helper) helper.stdin.end(); } catch (e) { /* ignore */ } helper = null; }, _tick: tick, _jobs: () => { loadJobs(); return jobs; },
     refreshMediaIndex() { return getIndex(true).then((i) => i.length); },   // optional: call once at app start so the first command is instant
     handles(type) { return Object.prototype.hasOwnProperty.call(H, type); },

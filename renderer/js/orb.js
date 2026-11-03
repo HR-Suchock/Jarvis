@@ -11,8 +11,12 @@
   var canvas, ctx, W = 0, H = 0, dpr = 1, running = false, raf = 0;
   var state = 'idle', target = 0, level = 0, speakSeed = 0;
   var col = COLORS.idle.slice();
+  // emotion tint while speaking (set by the app from the reply's mood)
+  var MOODC = { happy: [90, 235, 170], excited: [255, 214, 90], proud: [175, 140, 255], playful: [255, 140, 210], concerned: [255, 140, 70], serious: [90, 150, 255], apologetic: [150, 170, 205], curious: [120, 235, 255] };
+  var MOODSPIN = { excited: 1.4, playful: 1.2, concerned: 0.8, apologetic: 0.7, serious: 0.9 };
+  var moodName = '';
   var spin = 1, spinT = 1, bright = 0.6, brightT = 0.6;
-  var rot = 0, rot2 = 0, rot3 = 0, last = 0, t = 0;
+  var rot = 0, rot2 = 0, rot3 = 0, last = 0, t = 0, minDt = 0, lastPaint = 0, maxDpr = 2;
   var BARS = 72;
   var barVals = new Float32Array(BARS);
 
@@ -22,7 +26,7 @@
   function resize() {
     if (!canvas) return;
     var r = canvas.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     W = Math.max(1, r.width); H = Math.max(1, r.height);
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
@@ -33,18 +37,20 @@
     if (s === 'idle')           { spinT = 0.7; brightT = 0.55; }
     else if (s === 'listening') { spinT = 1.4; brightT = 1.0; }
     else if (s === 'thinking')  { spinT = 4.2; brightT = 0.9; }
-    else if (s === 'speaking')  { spinT = 1.8; brightT = 0.95; }
+    else if (s === 'speaking')  { spinT = 1.8 * (MOODSPIN[moodName] || 1); brightT = 0.95; }
   }
   function setLevel(v) { target = Math.max(0, Math.min(1, v)); }
 
   function frame(now) {
     raf = requestAnimationFrame(frame);
     if (document.hidden) return;
-    var dt = Math.min(0.05, (now - last) / 1000 || 0.016);
+    if (minDt && now - lastPaint < minDt) return;          // frame-rate governor (desktop app: idle / unfocused = far fewer frames)
+    lastPaint = now;
+    var dt = Math.min(minDt ? 0.12 : 0.05, (now - last) / 1000 || 0.016);
     last = now; t += dt;
 
     // ease colour / speed / brightness toward the current state
-    var tc = COLORS[state] || COLORS.idle;
+    var tc = (state === 'speaking' && MOODC[moodName]) ? MOODC[moodName] : (COLORS[state] || COLORS.idle);
     for (var i = 0; i < 3; i++) col[i] = lerp(col[i], tc[i], Math.min(1, dt * 5));
     spin = lerp(spin, spinT, Math.min(1, dt * 3));
     bright = lerp(bright, brightT, Math.min(1, dt * 3));
@@ -220,5 +226,8 @@
     COLORS.thinking = (c[0] > 200 && c[1] > 150 && c[2] < 120) ? [90, 200, 255] : [255, 176, 64];
   }
 
-  window.Orb = { start: start, setState: setState, setLevel: setLevel, resize: resize, setTheme: setTheme, setStyle: setStyle };
+  function setMood(m) { moodName = MOODC[m] ? m : ''; if (state === 'speaking') setState('speaking'); }
+  function setFps(f) { minDt = f > 0 ? 1000 / f - 3 : 0; }
+  function setMaxDpr(v) { maxDpr = v > 0 ? v : 2; resize(); }
+  window.Orb = { setMood: setMood, setFps: setFps, setMaxDpr: setMaxDpr, start: start, setState: setState, setLevel: setLevel, resize: resize, setTheme: setTheme, setStyle: setStyle };
 })();

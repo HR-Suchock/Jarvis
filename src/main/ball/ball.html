@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:">
+<title>Jarvis ball</title><link rel="stylesheet" href="ball.css"></head>
+<body>
+<div id="wrap" class="wrap side-right collapsed">
+  <div class="head">
+    <div id="orb" class="orb" title="Click to open · drag to move">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="r0" cx="32" cy="32" r="30"/><circle class="r1" cx="32" cy="32" r="24"/><circle class="r2" cx="32" cy="32" r="16"/><circle class="core" cx="32" cy="32" r="7"/></svg>
+    </div>
+    <div class="title"><b>J.A.R.V.I.S</b><span id="status">ready</span></div>
+    <button id="x" class="x" title="Close panel" aria-label="Close panel">✕</button>
+  </div>
+  <div class="card" id="card">
+    <div id="reply" class="reply">Online. Ask me anything — or watch the core below.</div>
+    <div class="ask">
+      <input id="q" type="text" maxlength="400" autocomplete="off" spellcheck="false" placeholder="Speak or type a command…">
+      <button id="mic" class="ic" title="Talk to Jarvis" aria-label="Talk">🎤</button>
+      <button id="go" class="ic" title="Send" aria-label="Send">➤</button>
+    </div>
+    <canvas id="core" class="core" width="316" height="118" aria-label="Live PC graphs"></canvas>
+    <div id="ins" class="ins ok"><b id="ins-v">SCANNING…</b><span id="ins-n">Reading the system.</span></div>
+    <div id="chips" class="chips"></div>
+    <div class="mods">
+      <button class="mod" data-id="scan"><i>◎</i>SCAN</button>
+      <button class="mod" data-id="focus" id="m-focus"><i>◉</i><span id="focus-l">FOCUS</span><u id="focus-b"></u></button>
+      <button class="mod" data-id="find"><i>⌖</i>LOCATE PHONE</button>
+      <button class="mod" data-id="jarvis"><i>◈</i>CONSOLE</button>
+    </div>
+    <div class="hint" id="hint">Drop a link or text here to send it to your phone</div>
+  </div>
+</div>
+<script src="ball.js"></script>
+</body></html>

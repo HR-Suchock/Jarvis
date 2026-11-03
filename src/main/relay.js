@@ -57,8 +57,9 @@ class Relay extends EventEmitter {
   }
 
   async _loop(run, ctx) {
-    let delay = 1000;
+    let delay = 1000, upSince = 0;
     while (run === this._run) {
+      upSince = 0;
       const ac = new AbortController();
       this._abort = ac;
       let watchdog = null;
@@ -68,7 +69,7 @@ class Relay extends EventEmitter {
         const res = await this.fetch(ctx.base + '/' + this.me + '.json', { headers: { Accept: 'text/event-stream' }, signal: ac.signal });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         this._setConnected(true);
-        delay = 1000;
+        upSince = Date.now();
         const dec = new TextDecoder();
         let buf = '';
         for await (const chunk of res.body) {
@@ -88,8 +89,11 @@ class Relay extends EventEmitter {
       }
       if (run !== this._run) return;
       this._setConnected(false);
+      // a connection that held for a while was healthy: start over gently; one that keeps dropping backs off up to 60 s
+      // (so a flapping network can never turn into a reconnect storm that re-downloads the inbox every second)
+      if (upSince && Date.now() - upSince > 30000) delay = 1000;
       await new Promise((r) => { this._retry = setTimeout(r, delay); });
-      delay = Math.min(delay * 2, 30000);
+      if (!(upSince && Date.now() - upSince > 30000)) delay = Math.min(delay * 2, 60000);
     }
   }
 

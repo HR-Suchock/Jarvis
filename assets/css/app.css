@@ -459,3 +459,7 @@ details.man .manb .btn.sm,.btn.sm{display:inline-block;min-height:38px;padding:7
 .pad-row.wrap{grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
 .pad-row .btn{padding:12px 6px;min-height:44px;font-size:13px}
 .pad-stat{min-height:20px;font-size:14px;color:var(--ok);margin:0 2px 8px}.pad-stat.bad{color:#ff8a8a}
+
+/* desktop app: lighter rendering */
+html.pc-lite .scan{animation:none;display:none}
+html.calm *,html.calm *::before,html.calm *::after{animation-play-state:paused!important}

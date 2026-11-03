@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, protocol, net, session, shell, clipboard, Notification, Tray, Menu, nativeImage, safeStorage, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, session, shell, clipboard, Notification, Tray, Menu, nativeImage, safeStorage, desktopCapturer, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -11,11 +11,13 @@ const { transcribe } = require('./stt');
 const { createActions, TIER } = require('./actions');
 const { Relay } = require('./relay');
 const proto = require('./link-protocol');
+const { createBall } = require('./ball');
 const extra = require('./pc-extra-actions')({ clipboard, shell, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
 const TIERS = Object.assign({}, TIER, extra.TIER);
 
 const APP_URL = 'jarvis://app/';
 const RENDERER = path.join(__dirname, '..', '..', 'renderer');
+const BALL_DIR = path.join(__dirname, 'ball');
 const ICON = path.join(__dirname, '..', '..', 'build', 'icon.png');
 const VERSION = app.getVersion();
 
@@ -23,6 +25,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'jarvis', privileges: { standard
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
+let ball = null;
 let win = null, tray = null, quitting = false, store = null, actions = null, relay = null;
 let battery = null;                // {pct, charging} reported by the page
 let disk = null;                   // {total, free}
@@ -66,7 +69,7 @@ function getXWorker() {
   xWorker.on('message', (m) => {
     if (!m || !m.rpc) return;
     if (m.rpc === 'run') {
-      Promise.resolve().then(() => actions.run(String(m.type), String(m.arg || ''), String(m.arg2 || ''))).catch(() => ({ ok: false, msg: 'That did not work.' }))
+      Promise.resolve().then(() => { const q = route(String(m.type), String(m.arg || ''), String(m.arg2 || '')); return extra.handles(q.type) ? runExtraAsync(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2); }).catch(() => ({ ok: false, msg: 'That did not work.' }))
         .then((r) => { try { if (xWorker) xWorker.postMessage({ rpcRes: m.id, r: { ok: !!(r && r.ok), msg: String((r && r.msg) || '') } }); } catch (e) { /* worker gone */ } });
     } else if (m.rpc === 'openpath' || m.rpc === 'openext') {
       const reply = (ok) => { try { if (xWorker) xWorker.postMessage({ rpcRes: m.id, r: { ok, msg: '' } }); } catch (e) { /* worker gone */ } };
@@ -91,6 +94,18 @@ function getXWorker() {
   xWorker.unref();
   pushTiers();
   return xWorker;
+}
+const ballOn = () => store.get('pref.ballOn') !== '0';           // on by default
+// a command from a ball button: same paths as a command from the phone, but the user is right here so no switches apply
+async function runLocalAction(type, arg, arg2) {
+  const q = route(type, arg, arg2);
+  return WORKER_REMOTE[q.type] ? runExtraAsync(q.type, q.arg, q.arg2) : extra.handles(q.type) ? extra.run(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2);
+}
+async function sendToPhone(type, arg) {
+  const c = linkCfg();
+  if (!c.enabled || !c.dbUrl || !c.secret || !relay) return { ok: false, msg: 'link to phone is not set up' };
+  const r = await relay.send(type, arg, '', 15000);
+  return { ok: !!(r && r.ok), msg: String((r && r.msg) || (r && r.ok ? 'done' : 'no answer')).slice(0, 80) };
 }
 function pushTiers() {
   try { const c = linkCfg(); if (xWorker) xWorker.postMessage({ tiers: { ctl: c.ctl === true, input: c.input === true, danger: c.danger === true } }); } catch (e) { /* ignore */ }
@@ -122,6 +137,9 @@ function runExtraSync(type, arg, arg2) {
   } catch (e) { return { ok: false, msg: 'That did not work.' }; }
 }
 
+// volume / media-key commands are sent as real key presses (the PowerShell audio route failed silently on some PCs)
+function route(type, arg, arg2) { const m = extra.remap ? extra.remap(type, arg) : null; return m || { type, arg, arg2 }; }
+
 const recent = [], mouseRecent = [];
 let lastMouseNote = 0;
 async function onRemote(cmd) {
@@ -145,8 +163,9 @@ async function onRemote(cmd) {
   if (tier === 'danger' && !c.danger) return { ok: false, msg: 'Power commands from the phone are switched off on the PC. Turn them on in Settings → Device Link.' };
   if (isMouse) { if (now - lastMouseNote > 60000) { lastMouseNote = now; notify('Jarvis — touchpad from your phone', 'The phone is controlling the mouse and keyboard.'); } }
   else if (tier !== 'ctl') notify('Jarvis — command from your phone', cmd.type + (cmd.arg ? ': ' + cmd.arg.slice(0, 80) : ''));
-  const r = WORKER_REMOTE[cmd.type] ? await runExtraAsync(cmd.type, cmd.arg, cmd.arg2)
-    : extra.handles(cmd.type) ? await extra.run(cmd.type, cmd.arg, cmd.arg2) : actions.run(cmd.type, cmd.arg, cmd.arg2);
+  const q = route(cmd.type, cmd.arg, cmd.arg2);
+  const r = WORKER_REMOTE[q.type] ? await runExtraAsync(q.type, q.arg, q.arg2)
+    : extra.handles(q.type) ? await extra.run(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2);
   if (!isMouse) emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
   return r;
 }
@@ -186,13 +205,14 @@ function createWindow(hidden) {
     x: sb && typeof sb.x === 'number' ? sb.x : undefined, y: sb && typeof sb.y === 'number' ? sb.y : undefined,
     minWidth: 420, minHeight: 580, show: false, title: 'J.A.R.V.I.S', backgroundColor: '#02070d',
     icon: ICON, autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: true },
   });
   if (sb && sb.max) win.maximize();
   win.on('resize', saveBounds); win.on('move', saveBounds); win.on('maximize', saveBounds); win.on('unmaximize', saveBounds);
   win.removeMenu();
   win.loadURL(APP_URL + 'index.html');
   win.once('ready-to-show', () => { if (!hidden) win.show(); });
+  win.on('closed', () => { if (!quitting && !linkCfg().enabled) app.quit(); });
   win.on('close', (e) => {
     if (!quitting && linkCfg().enabled) { e.preventDefault(); win.hide(); notifyOnce(); }
   });
@@ -209,7 +229,7 @@ function makeTray() {
   if (tray) return;
   tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
   tray.setToolTip('J.A.R.V.I.S');
-  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Jarvis', click: showWin }, { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }]));
+  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Jarvis', click: showWin }, { label: 'Show / hide floating ball (Ctrl+Alt+J)', click: () => { if (ball) ball.toggleVisible(); } }, { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }]));
   tray.on('click', showWin);
 }
 
@@ -220,13 +240,19 @@ function wireIpc() {
   on('wipe', (e) => { const keep = store.get('sys.link'); store.clear(); if (keep) store.set('sys.link', keep); e.returnValue = ''; });
   on('action', (e, t, a, b) => {
     t = String(t); a = String(a == null ? '' : a); b = String(b == null ? '' : b);
-    e.returnValue = JSON.stringify(extra.handles(t) ? runExtraSync(t, a, b) : actions.run(t, a, b));
+    const q = route(t, a, b);
+    e.returnValue = JSON.stringify(extra.handles(q.type) ? runExtraSync(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2));
   });
   // non-blocking twin of 'action': the window keeps responding while a drive scan / PowerShell command runs
   handle('action:async', async (e, t, a, b) => {
     t = String(t); a = String(a == null ? '' : a); b = String(b == null ? '' : b);
-    try { return extra.handles(t) ? await runExtraAsync(t, a, b) : actions.run(t, a, b); } catch (err) { return { ok: false, msg: 'That did not work.' }; }
+    try { const q = route(t, a, b); return extra.handles(q.type) ? await runExtraAsync(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2); } catch (err) { return { ok: false, msg: 'That did not work.' }; }
   });
+  // floating ball: switch + messages from the main window
+  on('ball:get', (e) => { e.returnValue = ballOn() ? '1' : ''; });
+  on('ball:set', (e, v) => { store.set('pref.ballOn', v ? '1' : '0'); if (ball) ball.setEnabled(!!v); e.returnValue = 'ok'; });
+  ipcMain.on('ball:text', (e, t) => { if (trusted(e) && ball && typeof t === 'string') ball.reply(t); });
+  ipcMain.on('ball:state', (e, st) => { if (trusted(e) && ball && typeof st === 'string') ball.state(st); });
   on('sysinfo', (e) => {
     const total = os.totalmem(), free = os.freemem();
     const o = { ramPct: Math.round(100 - free * 100 / total), ramUsedMB: Math.round((total - free) / 1048576), ramTotalMB: Math.round(total / 1048576), uptimeMin: Math.floor(os.uptime() / 60) };
@@ -307,15 +333,18 @@ function refreshDisk() {
   fs.promises.statfs(p).then((s) => { disk = { total: s.blocks * s.bsize, free: s.bavail * s.bsize }; }).catch(() => {});
 }
 
+for (const sw of ['disable-background-networking', 'disable-component-update', 'no-pings', 'disable-sync']) { try { app.commandLine.appendSwitch(sw); } catch (e) { /* ignore */ } }
+try { app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication'); } catch (e) { /* ignore */ }
 app.whenReady().then(() => {
   app.setAppUserModelId('com.suchock.jarvis.pc');
   store = new Store(app.getPath('userData'), safeStorage);
   protocol.handle('jarvis', (req) => {
     const u = new URL(req.url);
     let p = decodeURIComponent(u.pathname);
-    if (!p || p === '/') p = '/index.html';
-    const full = path.normalize(path.join(RENDERER, p));
-    if (!full.startsWith(RENDERER + path.sep)) return new Response('Forbidden', { status: 403 });
+    const root = u.hostname === 'ball' ? BALL_DIR : RENDERER;           // jarvis://ball/ = the floating-ball page
+    if (!p || p === '/') p = u.hostname === 'ball' ? '/ball.html' : '/index.html';
+    const full = path.normalize(path.join(root, p));
+    if (!full.startsWith(root + path.sep)) return new Response('Forbidden', { status: 403 });
     return net.fetch(pathToFileURL(full).toString());
   });
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
@@ -334,11 +363,27 @@ app.whenReady().then(() => {
   wireIpc();
   refreshDisk(); setInterval(refreshDisk, 120000);
   createWindow(process.argv.includes('--hidden') && linkCfg().enabled);
+  ball = createBall({
+    electron: { BrowserWindow, screen, ipcMain }, store, notify,
+    ask: (text) => emit('ballAsk', { text }), listen: () => emit('ballListen', {}), showMain: () => showWin(),
+    readClipboard: () => { try { return clipboard.readText(); } catch (e) { return ''; } },
+    runAction: runLocalAction,
+    sendPhone: sendToPhone,
+    toPhone: async (c) => { const r = c.kind === 'url' ? await sendToPhone('url', c.value) : await sendToPhone('notify', c.value); return r.ok ? { ok: true, msg: c.kind === 'url' ? 'opened on your phone' : 'shown on your phone' } : r; },
+    getDisk: () => disk, getBattery: () => battery,
+    getSelf: () => { try { const m = app.getAppMetrics(); return { cpu: +m.reduce((a, x) => a + (x.cpu.percentCPUUsage || 0), 0).toFixed(1), mb: Math.round(m.reduce((a, x) => a + (x.memory.workingSetSize || 0), 0) / 1024) }; } catch (e) { return null; } },
+    scanProcs: () => new Promise((res) => {
+      if (process.platform !== 'win32') return res([]);
+      require('child_process').execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => res(err ? [] : require('./ball').parseTasklist(out).slice(0, 5)));
+    }),
+  });
+  ball.setEnabled(ballOn());
+  try { globalShortcut.register('Control+Alt+J', () => { if (ball) ball.toggleVisible(); }); } catch (e) { /* shortcut taken */ }
   applyLink();
   try { getXWorker(); } catch (e) { /* scheduler is optional */ }
   setTimeout(() => { try { getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);
 });
 
 app.on('second-instance', showWin);
-app.on('before-quit', () => { quitting = true; if (store) store.flushSync(); if (relay) relay.stop(); if (actions) actions.dispose(); });
+app.on('before-quit', () => { quitting = true; try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ } if (store) store.flushSync(); if (relay) relay.stop(); if (actions) actions.dispose(); });
 app.on('window-all-closed', () => { if (quitting || !linkCfg().enabled) app.quit(); });

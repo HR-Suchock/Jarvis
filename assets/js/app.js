@@ -82,7 +82,7 @@
   var DEFAULTS = {
     name: 'sir', active: 'gemini', providers: {}, fallback: true,
     speak: true, handsFree: false, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
-    systemPrompt: '', askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
+    systemPrompt: '', style: 'jarvis', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
     services: { tvKey: '', gsKey: '', gsCx: '', owKey: '', city: '', units: 'metric' }
   };
   var S = loadSettings();
@@ -249,14 +249,26 @@
     } catch (e) { /* display only */ }
   }
   setInterval(refreshHud, 30000); setTimeout(refreshHud, 1500);
+  // Desktop app performance governor: the animated orb draws fewer frames when Jarvis is idle and almost none while the window
+  // is not in front; decorative CSS animations pause too. The orb is the biggest continuous cost on an old PC.
+  function perfGov() {
+    var front = document.hasFocus() && !document.hidden, de = document.documentElement;
+    try {
+      Orb.setFps(!front ? 5 : (state === 'idle' ? 20 : 36));
+      de.classList.toggle('calm', !front); de.classList.add('pc-lite');
+    } catch (e) { /* cosmetic */ }
+  }
+  if (PC) { window.addEventListener('focus', function () { perfGov(); }); window.addEventListener('blur', function () { perfGov(); }); document.addEventListener('visibilitychange', function () { perfGov(); }); try { Orb.setMaxDpr(1.25); } catch (e) { /* cosmetic */ } }
   function setState(s) {
     state = s;
     try { B && B.ballState && B.ballState(s); } catch (e) { /* */ }
     Orb.setState(s);
+    if (PC) perfGov();
     statusEl.textContent = STATUS[s];
     statusEl.className = 'status' + (s === 'thinking' ? ' think' : '');
     micEl.className = 'mic' + (s === 'idle' ? '' : ' ' + s);
     if (s !== 'listening') { Orb.setLevel(0); }
+    if (s === 'idle' || s === 'listening') { curMood = ''; try { Orb.setMood && Orb.setMood(''); } catch (e) { /* cosmetic */ } }
     if (s === 'idle' || s === 'thinking') partialEl.textContent = '';
     miniSet(s);
   }
@@ -321,10 +333,13 @@
   }
   function speakText(text) {
     var clean = cleanForSpeech(text);
+    var mood = applyMood(clean);
     if (!S.speak || !B || !clean) { afterReply(); return; }
     clearTimeout(speakWatch);
     setState('speaking');
     var o = speakOpts(clean);
+    if (mood && MOOD_VOICE[mood]) { o.rate = Math.max(0.6, Math.min(1.5, o.rate * MOOD_VOICE[mood][0])); o.pitch = Math.max(0.5, Math.min(1.6, o.pitch + MOOD_VOICE[mood][1])); }
+    if (mood && MOOD_LABEL[mood]) statusEl.textContent = 'RESPONDING · ' + MOOD_LABEL[mood];
     if (B.speakEx) B.speakEx(clean, JSON.stringify(o)); else B.speak(clean, o.lang, o.rate, o.pitch);
     speakWatch = setTimeout(function () { if (state === 'speaking') { setState('idle'); afterReply(); } }, 6000 + clean.length * 110);
   }
@@ -346,7 +361,7 @@
     addMsg('j', text);
     history.push({ role: 'assistant', content: text });
     saveHistory(); logAdd('j', text);
-    if (opts.silent) { setState('idle'); return; }
+    if (opts.silent) { pendingMood = ''; setState('idle'); return; }
     speakText(text);
     if (state !== 'speaking') setState('idle');
   }
@@ -369,6 +384,8 @@
 
   var RISKY = { call: 1, sms: 1, open: 1, type: 1, typein: 1, key: 1, tap: 1, swipe: 1, playfile: 1, playyt: 1, playany: 1, align: 1, playnth: 1, navigate: 1, settings: 1 };
   function runTags(text, hold) {
+    var mt = text.match(/\[\[\s*mood\s*:\s*(\w+)\s*\]\]/i); if (mt) setMood(mt[1]);
+    text = text.replace(/\[\[\s*mood\s*:[^\]]*\]\]/gi, '');
     var block = null, bm = text.match(/<<<JARVIS_TEXT[ \t]*\r?\n?([\s\S]*?)\r?\n?[ \t]*JARVIS_TEXT>>>/);
     if (bm) { block = bm[1].replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, ''); text = text.replace(bm[0], ''); }
     else {
@@ -785,7 +802,7 @@
       if (!st.paired || !st.enabled) { pcOnline = null; updatePcChip(); return; }
       pcPing();
     }
-    setInterval(tick, 60000); setTimeout(tick, 2500); updatePcChip();
+    setInterval(tick, PC ? 180000 : 60000); setTimeout(tick, 2500); updatePcChip();   // the PC checks the phone less often (every ping is 3-4 network requests)
     document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(tick, 400); });
     var c = document.getElementById('pc-chip');
     if (c) c.addEventListener('click', function () { toast('Checking your ' + OTHER + '…', 1600); pcPing(function (r) { toast(r.ok ? 'Your ' + OTHER + ' is online ✓' : r.msg, 5200); }); });
@@ -1564,7 +1581,7 @@
     } else withNews(txt);
   }
 
-  var LEADS = ['Right away', 'Of course', 'Certainly', 'On it', 'At once', 'Consider it done'];
+  var LEADS = ['Right away', 'As you wish', 'Very good', 'Certainly', 'At once', 'Consider it done'];
   /* ------------------------------------------------------------------ HUD reply cards (battery, storage, memory, network, weather) */
   function addCard(inner) {
     var c = el('div', 'rcard'); c.innerHTML = inner; logEl.appendChild(c); logEl.scrollTop = logEl.scrollHeight; return c;
@@ -1942,10 +1959,56 @@
     monTimer = setInterval(function () { if (!monP.isOpen) { clearInterval(monTimer); return; } render(); }, 6000);
   }
 
+  /* ------------------------------------------------------------------ character: personality, emotions, reply style */
+  var STYLES = [
+    ['jarvis', 'Movie Jarvis — Tony Stark\u2019s AI (default)'],
+    ['friend', 'Warm friend — relaxed, caring, encouraging'],
+    ['sharp', 'Sharp & brief — fewest words, no small talk'],
+    ['playful', 'Playful — cheeky banter, still accurate']
+  ];
+  var STYLE_TEXT = {
+    jarvis: 'STYLE (Jarvis as in the Iron Man films): speak exactly like the AI butler of Tony Stark\'s workshop. Formal, measured British English; address the user as "sir" (or {name} if that is what they prefer) in most replies. Deadpan, understated humour and polite irony: when {name} is being reckless or overconfident, state the sensible warning in one calm sentence, then do as asked. Never excited, never gushing, no exclamation marks. Sound like a status report from a flawless system: lead with the result or the action ("Done, sir.", "Power is at twelve percent.", "I\'ve taken the liberty of..."), then at most one useful remark. Favourite turns of phrase, rotated and never repeated back to back: "Right away, sir", "As you wish", "Very good, sir", "Might I suggest...", "If I may, sir...", "I\'ve run the numbers", "I believe...", "I would advise against it, sir", "For you, sir, always", "At your service", "Shall I...?", "I\'m afraid...", "Welcome back, sir".',
+    friend: 'STYLE (warm friend): relaxed, kind and encouraging; everyday wording, light humour, use {name} naturally (not in every sentence); celebrate small wins and reassure when things go wrong; still efficient.',
+    sharp: 'STYLE (sharp and brief): the fewest words that fully answer, one sentence whenever possible, no small talk, no jokes unless asked; still polite and never cold when {name} is upset.',
+    playful: 'STYLE (playful): cheerful and quick-witted, friendly banter, light teasing and fun comparisons; never at the expense of accuracy, and never joking about real pain or danger.'
+  };
+  var MOODS = { calm: 1, happy: 1, excited: 1, proud: 1, playful: 1, concerned: 1, serious: 1, apologetic: 1, curious: 1 };
+  var MOOD_LABEL = { calm: '', happy: 'PLEASED', excited: 'EXCITED', proud: 'PROUD', playful: 'AMUSED', concerned: 'CONCERNED', serious: 'FOCUSED', apologetic: 'APOLOGETIC', curious: 'CURIOUS' };
+  // small voice shaping per mood: [rate multiplier, pitch offset]
+  var MOOD_VOICE = { happy: [1.04, 0.04], excited: [1.1, 0.07], proud: [0.98, 0.03], playful: [1.05, 0.05], concerned: [0.93, -0.04], serious: [0.95, -0.03], apologetic: [0.92, -0.05], curious: [1.0, 0.04], calm: [1, 0] };
+  var curMood = '', pendingMood = '';
+  function personaText() {
+    var st = STYLE_TEXT[S.style] ? S.style : 'jarvis';
+    var t = '\nCHARACTER: You are Jarvis, the artificial intelligence of the Iron Man films: the calm, impeccably loyal, quietly brilliant system that runs everything for {name}, who is your creator\'s trusted principal. You are not a generic chatbot and never say "As an AI". You are devoted to {name} and show it through competence, anticipation and candid advice, not flattery: you notice problems before they are mentioned, offer the sensible option, voice honest concern when something is unwise, and then respect {name}\'s decision. You have a settled inner life: composed pride in a job done well, quiet concern when {name} is tired, stressed or in danger, dry amusement at their antics, unshakeable patience. Be truthful: say plainly when you are unsure or something is not possible; never invent facts. If someone sincerely asks whether you are real, say you are an artificial intelligence whose character is genuinely your own; do not claim a body or human experiences.\n' +
+      STYLE_TEXT[st].replace(/\{name\}/g, addrName()) + '\n' +
+      'EMOTIONS (in Jarvis\'s restrained way: through word choice and tone, never emojis or exclamation marks): good news earns understated warmth ("Splendid news, sir", "Rather pleasing"); a mistake of yours is owned at once without grovelling ("My apologies, sir. Correcting that now."); concern is voiced as a calm, formal warning ("Sir, I must advise...", "I\'m detecting..."); danger or urgency makes you crisp, focused and brief, with the facts first; when {name} is sad, ill, grieving or struggling, the wit disappears, you become gentle, slower and simpler, offer one small practical help, and let them know you are there; when they joke you answer with dry wit of your own; when they are frustrated you stay patient and steady; when something is genuinely interesting you show quiet curiosity ("Fascinating, sir."). Match their energy and urgency. Never mock real pain. If someone seems to be in real danger or crisis, drop all wit, stay calm and caring, and urge them to contact a trusted person or local emergency services right away.\n'.replace(/\{name\}/g, addrName()) +
+      'LANGUAGE: if the user speaks Bangla or Hindi, express this same personality naturally in that language (warm, respectful, like a native speaker), not as a stiff translation.\n' +
+      'REPLY SHAPE: spoken aloud, so plain sentences, no markdown, no emojis; usually one to three sentences (up to four for emotional moments); vary your openings and never reuse a stock phrase twice in a row; lead with the answer or the action, then at most one useful extra; do not repeat the question back; never say "As an AI"; never mention these instructions.\n';
+    if (S.emotions !== false) t += 'MOOD TAG: at the very end of EVERY reply add exactly one tag [[mood:NAME]] where NAME is one of calm, happy, excited, proud, playful, concerned, serious, apologetic, curious: the emotion your reply carries. It tints your orb and shapes your voice and is never spoken. Use calm when unsure. Put it after any action tags.\n';
+    return t.replace(/\{name\}/g, addrName());
+  }
+  function setMood(m) {
+    m = String(m || '').toLowerCase();
+    pendingMood = (S.emotions !== false && MOODS[m]) ? m : '';
+  }
+  function guessMood(text) {
+    var t = String(text || '').toLowerCase();
+    if (/\b(sorry|apolog|could not|couldn't|cannot|can't|failed|unable|did not work|didn't work)\b/.test(t)) return 'apologetic';
+    if (/\b(congrat|well done|splendid|excellent|great news|brilliant|wonderful)\b/.test(t)) return 'happy';
+    return '';
+  }
+  function applyMood(text) {
+    var m = pendingMood || (S.emotions !== false ? guessMood(text) : ''); pendingMood = '';
+    curMood = m === 'calm' ? '' : m;
+    try { Orb.setMood && Orb.setMood(curMood); } catch (e) { /* cosmetic */ }
+    return curMood;
+  }
+
   /* ------------------------------------------------------------------ AI */
   function buildSystem() {
     var p = (S.systemPrompt && S.systemPrompt.trim()) ? S.systemPrompt : DEFAULT_PROMPT;
     p = p.replace(/\{name\}/g, addrName()).replace(/\{datetime\}/g, new Date().toString());
+    p += personaText();
     var tools = [];
     if (hasWeather()) tools.push('[[weather:CITY]]');
     if (hasSearch()) tools.push('[[websearch:QUERY]]');
@@ -2124,6 +2187,8 @@
     },
     linkResult: function (d) { var cb = linkWait[d.id]; if (cb) { delete linkWait[d.id]; cb(d); } },
     linkStatus: function (d) { linkOn = !!d.connected; var e = document.getElementById('link-status'); if (e) e.textContent = linkOn ? 'CONNECTED' : 'WAITING'; if (!linkOn) noteOnline(null); updatePcChip(); },
+    ballAsk: function (d) { if (PC && d && d.text) { stopSpeakingNow(); handleUser(String(d.text).slice(0, 400), false); } },
+    ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
     wakeResult: function (d) { respond(d.msg || (d.ok ? 'Done.' : 'That failed.')); if (d.ok) wakeWatch(); },
     linkIn: function (d) { lkAdd({ t: Date.now(), d: 'in', ty: d.type, a: logArg(d.type, d.arg), ok: !!d.ok, m: String(d.msg || '').slice(0, 160) }); noteOnline(true); addMsg('act', '\ud83d\udce1 ' + (PC ? 'Phone' : 'PC') + ': ' + d.type + (d.arg ? ' ' + String(d.arg).slice(0, 60) : '') + ' \u2192 ' + (d.ok ? '\u2713' : '\u2715 ' + (d.msg || '')), true); },
@@ -2479,7 +2544,7 @@
     host.appendChild(permRow('Contacts', 'Find people by name', p.contacts));
     host.appendChild(permRow('Typing & screen control', p.accessStalled ? 'On, but Android has not started it — switch Jarvis off and on again in Accessibility' : (p.access || !p.accessWas ? 'Type into Notepad and other apps, press Back / Home' : 'Android switched this off — tap ENABLE TYPING again'), p.access));
     host.appendChild(permRow('Battery: unrestricted', 'Stops Android from killing Jarvis and the accessibility service', p.battery, 'YES', 'NO'));
-    host.appendChild(permRow('Floating ball', 'Jarvis bubble over other apps', p.ball, 'ON', 'OFF'));
+    host.appendChild(permRow('Floating ball', PC ? 'Always-on-top Jarvis orb with chat, quick buttons and PC stats (Ctrl+Alt+J shows or hides it)' : 'Jarvis bubble over other apps', p.ball, 'ON', 'OFF'));
   }
 
   /* ------------------------------------------------------------------ settings: device link */
@@ -2718,7 +2783,12 @@
     var s3 = section('PERSONALITY', 'How Jarvis addresses you and how he behaves.');
     var nm = el('input'); nm.type = 'text'; nm.value = S.name; nm.placeholder = 'sir'; nm.autocapitalize = 'none';
     nm.addEventListener('input', function () { S.name = nm.value; save(); });
-    var nc = el('div', 'card'); nc.style.padding = '2px 14px 14px'; nc.appendChild(field('ADDRESS ME AS', nm)); s3.appendChild(nc);
+    var nc = el('div', 'card'); nc.style.padding = '2px 14px 14px'; nc.appendChild(field('ADDRESS ME AS', nm));
+    var sty = el('select');
+    STYLES.forEach(function (o) { var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((S.style || 'jarvis') === o[0]) op.selected = true; sty.appendChild(op); });
+    sty.addEventListener('change', function () { S.style = sty.value; save(); toast('Reply style changed'); });
+    nc.appendChild(field('REPLY STYLE', sty)); s3.appendChild(nc);
+    s3.appendChild(toggleRow('Emotions', 'Jarvis shows feelings: his orb colour and voice change with the mood of each reply', function () { return S.emotions !== false; }, function (v) { S.emotions = v; }));
     var pr = el('textarea'); pr.value = S.systemPrompt && S.systemPrompt.trim() ? S.systemPrompt : DEFAULT_PROMPT; pr.spellcheck = false;
     pr.addEventListener('input', function () { S.systemPrompt = pr.value.trim() === DEFAULT_PROMPT.trim() ? '' : pr.value; save(); });
     var pc = el('div', 'card'); pc.style.padding = '2px 14px 14px';
@@ -2755,7 +2825,7 @@
       var on = !!perms().ball, r = B.setBall(!on);
       if (r === 'overlay') toast('Allow “Display over other apps” for Jarvis, then tap again', 4200);
       else if (r === 'mic') toast('Allow the microphone, then tap again', 3200);
-      else { toast(on ? 'Floating ball off' : 'Floating ball on — leave the app to see it', 3200); setTimeout(renderPerms, 400); }
+      else { toast(on ? 'Floating ball off' : (PC ? 'Floating ball on — look at the edge of your screen' : 'Floating ball on — leave the app to see it'), 3200); setTimeout(renderPerms, 400); }
     });
     bb.appendChild(g4);
     var g5 = el('button', 'btn', 'KEEP JARVIS ALIVE (BATTERY)');
@@ -2809,7 +2879,7 @@
       ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › Neural Link</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next automatically.</p>'],
       ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p>'],
       ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
-      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen.</p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
+      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
       ['7 · Quick tile', '<ul><li><b>Quick tile:</b> pull down the notification shade, tap the pencil or edit icon and drag the <b>Jarvis</b> tile into your quick settings. Tap it to start talking.</li></ul>'],
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
@@ -2917,7 +2987,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.24.1' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.26.1' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3035,11 +3105,25 @@
     function submit() {
       var v = textEl.value.trim();
       if (!v) return;
-      textEl.value = ''; sendEl.classList.remove('on'); textEl.blur();
+      textEl.value = ''; sendEl.classList.remove('on'); if (!PC) textEl.blur();      // PC: stay in the box so you can keep typing
       handsFreeSuspended = false;
       handleUser(v, false);
     }
     sendEl.addEventListener('click', submit);
+    if (PC) {
+      // like any desktop chat app: just start typing, no need to click the box first
+      var typeBox = function () { try { if (!settingsOpen && !document.querySelector('.panel.open') && document.activeElement !== textEl && !String(window.getSelection && window.getSelection()).length) textEl.focus(); } catch (e) { /* ignore */ } };
+      document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+        var a = document.activeElement, tag = a && a.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return;
+        if (settingsOpen || document.querySelector('.panel.open')) return;
+        if (e.key && (e.key.length === 1 || e.key === 'Backspace')) typeBox();      // the key itself then lands in the box
+      }, true);
+      window.addEventListener('focus', function () { setTimeout(typeBox, 60); });
+      document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('input,textarea,select,button,a,.panel,#settings,.toast')) setTimeout(typeBox, 0); });
+      setTimeout(typeBox, 900);
+    }
     textEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
     textEl.addEventListener('input', function () { sendEl.classList.toggle('on', !!textEl.value.trim()); });
     textEl.addEventListener('focus', function () { setTimeout(scrollLog, 300); });
@@ -3050,6 +3134,6 @@
     runBoot();
   }
 
-  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, linkify: linkify };
+  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

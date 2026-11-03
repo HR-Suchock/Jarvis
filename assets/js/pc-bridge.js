@@ -140,7 +140,7 @@
     // async twin used by the PC window so a slow command (first drive scan, PowerShell) never freezes the app
     actionAsync: function (t, a, b) { if (P.actionAsync) return P.actionAsync(t, a, b); try { return Promise.resolve(JSON.parse(P.action(t, a, b))); } catch (e) { return Promise.resolve({ ok: false, msg: 'That action failed.' }); } },
     appInfo: function () { return P.appInfo(); },
-    permissions: function () { return J({ mic: true, call: true, contacts: true, access: true, accessStalled: false, ball: false, accessWas: true, battery: true, overlay: true }); },
+    permissions: function () { return J({ mic: true, call: true, contacts: true, access: true, accessStalled: false, ball: (function () { try { return !!(P.ballGet && P.ballGet()); } catch (e) { return false; } })(), accessWas: true, battery: true, overlay: true }); },
     requestPermissions: function () {
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) { s.getTracks().forEach(function (t) { t.stop(); }); emit('permissions'); }, function () { emit('permissions'); });
     },
@@ -180,7 +180,11 @@
     consumeLaunchFlag: function () { return ''; },
     setWidgetTheme: function () { },
     // phone-only features: harmless no-ops here
-    setBall: function () { return 'ok'; }, ballState: function () { }, ballText: function () { }, ballCall: function () { },
+    // floating ball: the PC has its own always-on-top ball window (see src/main/ball.js)
+    setBall: function (on) { try { return P.ballSet ? P.ballSet(!!on) : 'ok'; } catch (e) { return 'ok'; } },
+    ballState: function (st) { try { P.ballState && P.ballState(st); } catch (e) { /* */ } },
+    ballText: function (t) { try { P.ballText && P.ballText(t); } catch (e) { /* */ } },
+    ballCall: function () { },
     requestBattery: function () { }, openAppSettings: function () { }, setCallHelp: function () { }, callHelpState: function () { return '{}'; },
     // device link
     linkState: function () { return P.link.state(); },
