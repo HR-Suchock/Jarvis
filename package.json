@@ -10,7 +10,7 @@
     "sync": "node scripts/sync-assets.js",
     "start": "npm run sync && electron .",
     "dist": "npm run sync && electron-builder --win --publish never",
-    "test": "node --test --test-timeout=30000 test/*.test.js"
+    "test": "node --test --test-timeout=180000 test/*.test.js"
   },
   "devDependencies": {
     "electron": "45.1.0",

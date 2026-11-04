@@ -54,9 +54,22 @@ test('live: java "phone" client <-> node "pc" relay through the fake database', 
   const child = spawn('java', ['-Dfile.encoding=UTF-8', '-cp', OUT, 'com.suchock.jarvis.LinkTest', 'phone', db.url, secret], { env: { ...process.env, JAVA_TOOL_OPTIONS: '' } });
   let out = '';
   child.stdout.on('data', (b) => (out += b));
-  await new Promise((resolve) => { const t = setInterval(() => { if (out.includes('READY')) { clearInterval(t); resolve(); } }, 100); });
-  const toPhone = await pc.send('torch', 'on', '', 8000);          // pc -> java
-  await new Promise((r) => child.on('exit', r));
+  let err = '', exited = false;
+  child.stderr.on('data', (b) => (err += b));
+  const exit = new Promise((r) => child.on('exit', (code) => { exited = true; r(code); }));
+  try {
+    // never wait forever: give the java side 40 s to say READY, and fail with its output if it dies or stalls
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const t = setInterval(() => {
+        if (out.includes('READY')) { clearInterval(t); resolve(); }
+        else if (exited) { clearInterval(t); reject(new Error('java client stopped early. stdout: ' + out + ' stderr: ' + err)); }
+        else if (Date.now() - t0 > 40000) { clearInterval(t); reject(new Error('java client never became READY. stdout: ' + out + ' stderr: ' + err)); }
+      }, 100);
+    });
+    var toPhone = await pc.send('torch', 'on', '', 8000);          // pc -> java
+    await Promise.race([exit, new Promise((r) => setTimeout(r, 30000))]);
+  } finally { try { child.kill(); } catch (e) { /* already gone */ } }
   assert.match(out, /JAVA_CONNECTED true/);
   assert.match(out, /JAVA_SEND true pc opened notepad/);          // java -> node -> answer
   assert.match(out, /JAVA_PING true/);
