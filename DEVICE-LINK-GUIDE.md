@@ -42,7 +42,7 @@ The two apps talk through a small free **Firebase Realtime Database** that you o
         ".write": true,
         "inbox": {
           "$box": {
-            "$msg": { ".validate": "newData.hasChildren(['v','n','c']) && newData.child('c').val().length < 20000" }
+            "$msg": { ".validate": "newData.hasChildren(['v','n','c']) && newData.child('c').val().length < 70000" }
           }
         }
       }

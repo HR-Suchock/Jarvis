@@ -9,7 +9,7 @@
         "inbox": {
           "$box": {
             "$msg": {
-              ".validate": "newData.hasChildren(['v', 'n', 'c']) && newData.child('c').val().length < 20000"
+              ".validate": "newData.hasChildren(['v', 'n', 'c']) && newData.child('c').val().length < 70000"
             }
           }
         }

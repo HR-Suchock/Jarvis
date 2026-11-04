@@ -717,7 +717,7 @@
     render(); rtP.open();
   }
 
-  var FB_RULES = JSON.stringify({ rules: { '.read': false, '.write': false, jarvis: { $room: { '.read': true, '.write': true, inbox: { $box: { $msg: { '.validate': "newData.hasChildren(['v', 'n', 'c']) && newData.child('c').val().length < 20000" } } } } } } }, null, 2);
+  var FB_RULES = JSON.stringify({ rules: { '.read': false, '.write': false, jarvis: { $room: { '.read': true, '.write': true, inbox: { $box: { $msg: { '.validate': "newData.hasChildren(['v', 'n', 'c']) && newData.child('c').val().length < 70000" } } } } } } }, null, 2);
   // device link details travel inside the same passphrase-encrypted backup as the keys
   function linkBackup() {
     try {

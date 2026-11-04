@@ -117,7 +117,7 @@ async function sendFileToPhone(buf, name, mime) {
   if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 3 MB' };
   name = String(name || 'file').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(-80) || 'file';
   mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(mime || '') ? String(mime).toLowerCase() : 'application/octet-stream';
-  const CH = 150000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');
+  const CH = 30000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');
   let last = null;
   for (let i = 0; i < n; i++) {
     last = await relay.send('filepart', JSON.stringify({ id, i, n, size: buf.length, name, mime }), buf.subarray(i * CH, (i + 1) * CH).toString('base64'), 30000);
