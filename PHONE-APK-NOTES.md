@@ -11,7 +11,7 @@ The PC now sends three things to the phone through the encrypted link. The phone
 ## 0. Do this first: publish the new Firebase rule (once)
 Firebase console → Realtime Database → Rules → replace with `firebase-rules.json` from this package → Publish.
 The only change: `length < 20000` became `length < 70000`. Without it every file piece is refused by the database.
-Why it is safe: the largest message the PC now sends is about 54,000 characters (measured), the link itself still refuses anything over 64 KB, and the data is still encrypted. Every piece is 30,000 bytes of file data.
+Why it is safe: the largest message the PC now sends is about 64,500 characters (measured), the link itself still refuses anything over 64 KB, and the data is still encrypted. Every piece is 36,000 bytes of file data.
 
 ## 1. Add `FileParts.java` (already in this package: `src/com/suchock/jarvis/FileParts.java`)
 Pure Java (no Android imports, no lambdas). It collects the pieces in order, refuses wrong order, bad base64, more than 3 MB, more than 200 pieces, more than 3 files at once, and cleans the file name (no folders, no `..`). Tested: 100 KB in 4 pieces comes out byte-identical, and the bad cases are refused.
