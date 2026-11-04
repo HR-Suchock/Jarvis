@@ -50,5 +50,9 @@ let bad = 0; const ck = (n, c, x) => { if (!c) { bad++; console.log('FAIL', n, x
   r = await e.run('pclink', 'https://a.com/ & calc'); ck('pclink refuses spaces', !r.ok, r);
   ck('v1.23 tiers', e.tier('pclink') === 'ctl' && e.tier('wolsetup') === 'ctl' && e.handles('wolsetup'));
   r = await e.run('wolsetup'); ck('wolsetup answers', typeof r.msg === 'string' && r.msg.length > 10, r);
+  { const rm = make({ exec, platform: 'win32', clipboard, shell }).remap;   // one tap on the phone's VOL buttons = one key press (a 2 % step)
+    ck('volume upstep = 1 press', JSON.stringify(rm('volume', 'upstep')) === JSON.stringify({ type: 'mediakey', arg: 'volup', arg2: '1' }), rm('volume', 'upstep'));
+    ck('volume downstep = 1 press', JSON.stringify(rm('volume', 'downstep')) === JSON.stringify({ type: 'mediakey', arg: 'voldown', arg2: '1' }), rm('volume', 'downstep'));
+    ck('voice "volume up" stays 5 presses', rm('volume', 'up').arg2 === '5', rm('volume', 'up')); }
   console.log('bad', bad); process.exit(bad ? 1 : 0);
 })();

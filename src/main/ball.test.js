@@ -19,6 +19,10 @@ test('classifyDrop: link vs text vs nothing', () => {
   assert.strictEqual(b.classifyDrop('hello').kind, 'text');
   assert.strictEqual(b.classifyDrop('  \n#c'), null);
 });
+test('copied text up to 4000 characters is kept whole (it goes to the phone clipboard)', () => {
+  const t = 'a'.repeat(3900);
+  assert.strictEqual(b.classifyDrop(t).value.length, 3900);
+});
 test('insight: healthy PC scores high, loaded PC scores low', () => {
   const calm = b.insight({ cpu: Array(20).fill(5), ram: Array(20).fill(40) }, { cpu: 5, ram: 40, disk: 50, batt: null });
   assert.ok(calm.score >= 90 && calm.tone === 'ok');

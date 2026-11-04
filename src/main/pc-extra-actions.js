@@ -381,7 +381,7 @@ function make(deps) {
   // volume/media commands are sent as real key presses (works on every Windows PC); the PowerShell audio route failed silently on some
   function remap(type, arg) {
     const a = String(arg || '').toLowerCase().trim();
-    if (type === 'volume') { if (a === 'up' || a === 'louder') return { type: 'mediakey', arg: 'volup', arg2: '5' }; if (a === 'down' || a === 'quieter') return { type: 'mediakey', arg: 'voldown', arg2: '5' }; if (a === 'mute') return { type: 'mediakey', arg: 'mute', arg2: '1' }; }
+    if (type === 'volume') { if (a === 'upstep') return { type: 'mediakey', arg: 'volup', arg2: '1' }; if (a === 'downstep') return { type: 'mediakey', arg: 'voldown', arg2: '1' }; if (a === 'up' || a === 'louder') return { type: 'mediakey', arg: 'volup', arg2: '5' }; if (a === 'down' || a === 'quieter') return { type: 'mediakey', arg: 'voldown', arg2: '5' }; if (a === 'mute') return { type: 'mediakey', arg: 'mute', arg2: '1' }; }
     if (type === 'media') { const k = { play: 'playpause', pause: 'playpause', resume: 'playpause', toggle: 'playpause', next: 'next', previous: 'prev', stop: 'stop' }[a]; if (k) return { type: 'mediakey', arg: k, arg2: '1' }; }
     return null;
   }

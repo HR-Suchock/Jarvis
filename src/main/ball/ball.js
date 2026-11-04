@@ -56,7 +56,7 @@
     last = s; draw(s);
     if (s.ins) { $('ins').className = 'ins ' + s.ins.tone; $('ins-v').textContent = s.ins.verdict; $('ins-n').textContent = s.ins.note; }
     chipsUI(s.chips);
-    $('hint').textContent = s.me ? 'Jarvis itself: ' + s.me.cpu + '% CPU · ' + s.me.mb + ' MB   —   drop a link or text here to send it to your phone' : 'Drop a link or text here to send it to your phone';
+    $('hint').textContent = s.me ? 'Jarvis itself: ' + s.me.cpu + '% CPU · ' + s.me.mb + ' MB   —   drop a link or text here to send it to your phone' : 'Drop a link, text or picture here to send it to your phone';
   }
   // ---- focus ring
   function focusUI() {
@@ -85,6 +85,7 @@
     else if (ev === 'state') setState(d.state);
     else if (ev === 'status') say(d.text);
     else if (ev === 'focus') setFocus(d.end);
+    else if (ev === 'ring') { $('find-l').textContent = d.on ? 'STOP RINGING' : 'LOCATE PHONE'; $('m-find').classList.toggle('run', !!d.on); }
     else if (ev === 'inputfocus') { setTimeout(function () { q.focus(); }, 40); }
   });
   // click = open/close, drag = move (a 5 px threshold tells them apart)
@@ -105,7 +106,7 @@
   function ask() { var v = q.value.trim(); if (!v) return; q.value = ''; reply.textContent = '…'; setState('thinking'); J.ask(v); }
   $('go').addEventListener('click', ask);
   q.addEventListener('keydown', function (e) { if (e.key === 'Enter') ask(); else if (e.key === 'Escape') J.toggle(false); });
-  $('mic').addEventListener('click', function () { J.listen(); });
+  $('mic').addEventListener('click', function () { if ($('mic').classList.contains('on')) { J.stopListen(); say('stopped listening'); } else J.listen(); });   // tap to start, tap to stop (it also stops by itself when you finish speaking)
   // drop a link / text on the ball or the panel -> phone
   function over(on) { orb.classList.toggle('over', on); card.classList.toggle('over', on && !wrap.classList.contains('collapsed')); }
   ['dragenter', 'dragover'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); over(true); }); });
@@ -114,7 +115,14 @@
     e.preventDefault(); over(false);
     var dt = e.dataTransfer; if (!dt) return;
     var t = dt.getData('text/uri-list') || dt.getData('text/plain') || '';
-    if (!t && dt.files && dt.files.length) { say('I cannot send files yet — links and text only'); return; }
+    if (!t && dt.files && dt.files.length) {
+      var f = dt.files[0];
+      if (f.size > 12000000) { say('too big — the limit is 3 MB'); return; }
+      if (f.size > 3000000 && !/^image\//i.test(f.type)) { say('too big — the limit is 3 MB'); return; }
+      say('sending ' + f.name.slice(0, 24) + '…');
+      f.arrayBuffer().then(function (buf) { return J.dropFile(f.name, f.type, buf); }).then(function (r) { say(r && r.msg ? r.msg : 'sent'); }, function () { say('failed'); });
+      return;
+    }
     if (!t) return; say('sending to phone…');
     J.drop(t).then(function (r) { say(r && r.msg ? r.msg : 'sent'); }, function () { say('failed'); });
   });

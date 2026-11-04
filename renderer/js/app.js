@@ -2188,6 +2188,7 @@
     linkResult: function (d) { var cb = linkWait[d.id]; if (cb) { delete linkWait[d.id]; cb(d); } },
     linkStatus: function (d) { linkOn = !!d.connected; var e = document.getElementById('link-status'); if (e) e.textContent = linkOn ? 'CONNECTED' : 'WAITING'; if (!linkOn) noteOnline(null); updatePcChip(); },
     ballAsk: function (d) { if (PC && d && d.text) { stopSpeakingNow(); handleUser(String(d.text).slice(0, 400), false); } },
+    ballStop: function () { if (PC && state === 'listening') stopListening(); },
     ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
     wakeResult: function (d) { respond(d.msg || (d.ok ? 'Done.' : 'That failed.')); if (d.ok) wakeWatch(); },
@@ -2633,7 +2634,7 @@
       var qh = el('div', 'dl-note', 'Quick controls for your ' + OTHER + ':'); box.appendChild(qh);
       var quick = PC
         ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off'], ['RING PHONE', 'findphone', ''], ['STOP RING', 'stopring', '']]
-        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['RANDOM MUSIC', 'playrandom', 'music'], ['STOP PLAYER', 'stopmedia', ''], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
+        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'upstep'], ['VOL \u2212', 'volume', 'downstep'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['RANDOM MUSIC', 'playrandom', 'music'], ['STOP PLAYER', 'stopmedia', ''], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
       var qr = el('div', 'row'); qr.style.cssText = 'margin:0 0 10px;flex-wrap:wrap';
       quick.forEach(function (q) { qr.appendChild(btn(q[0], '', function () { linkSend(q[1], q[2], '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), 3200); }); })); });
       if (!PC) qr.appendChild(btn('TOUCHPAD', 'pri', function () { if (settingsOpen) closeSettings(); openTouchpad(); }));
@@ -2987,7 +2988,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.26.1' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.27.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }

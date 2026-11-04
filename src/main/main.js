@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, protocol, net, session, shell, clipboard, N
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 
 const { Store } = require('./store');
@@ -107,6 +108,50 @@ async function sendToPhone(type, arg) {
   const r = await relay.send(type, arg, '', 15000);
   return { ok: !!(r && r.ok), msg: String((r && r.msg) || (r && r.ok ? 'done' : 'no answer')).slice(0, 80) };
 }
+// ---- files to the phone: cut into encrypted pieces, sent one by one; the phone saves them (pictures into Gallery, others into Downloads)
+const FILE_MAX = 3000000;
+async function sendFileToPhone(buf, name, mime) {
+  const c = linkCfg();
+  if (!c.enabled || !c.dbUrl || !c.secret || !relay) return { ok: false, msg: 'link to phone is not set up' };
+  if (!Buffer.isBuffer(buf) || !buf.length) return { ok: false, msg: 'that file is empty' };
+  if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 3 MB' };
+  name = String(name || 'file').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(-80) || 'file';
+  mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(mime || '') ? String(mime).toLowerCase() : 'application/octet-stream';
+  const CH = 150000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');
+  let last = null;
+  for (let i = 0; i < n; i++) {
+    last = await relay.send('filepart', JSON.stringify({ id, i, n, size: buf.length, name, mime }), buf.subarray(i * CH, (i + 1) * CH).toString('base64'), 30000);
+    if (!last || !last.ok) return { ok: false, msg: String((last && last.msg) || 'no answer').slice(0, 80) };
+  }
+  return { ok: true, msg: String((last && last.msg) || 'sent').slice(0, 80) };
+}
+// a ball drop: big pictures are shrunk to a JPEG that fits; anything else must fit as it is
+async function ballFileToPhone(f) {
+  let { name, mime, data } = f;
+  if (/^image\//i.test(mime) && data.length > 2500000) {
+    try {
+      let img = nativeImage.createFromBuffer(data); const sz = img.getSize();
+      if (sz.width > 2200) img = img.resize({ width: 2200 });
+      data = img.toJPEG(80); mime = 'image/jpeg'; name = name.replace(/\.[^.]*$/, '') + '.jpg';
+    } catch (e) { return { ok: false, msg: 'could not shrink that picture' }; }
+  }
+  const r = await sendFileToPhone(data, name, mime);
+  return r.ok ? { ok: true, msg: 'sent — saved on your phone' } : r;
+}
+async function captureJpeg() {
+  const disp = screen.getPrimaryDisplay();
+  const w = Math.min(1600, disp.size.width), h = Math.round(w * disp.size.height / disp.size.width);
+  const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+  if (!srcs.length) throw new Error('no screen found');
+  return srcs[0].thumbnail.toJPEG(75);
+}
+async function shotToPhone() {
+  try {
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    const r = await sendFileToPhone(await captureJpeg(), 'pc-screenshot-' + stamp + '.jpg', 'image/jpeg');
+    if (!r.ok) notify('Jarvis — could not send the screenshot to your phone', r.msg);
+  } catch (e) { notify('Jarvis — could not send the screenshot to your phone', String(e && e.message || e).slice(0, 120)); }
+}
 function pushTiers() {
   try { const c = linkCfg(); if (xWorker) xWorker.postMessage({ tiers: { ctl: c.ctl === true, input: c.input === true, danger: c.danger === true } }); } catch (e) { /* ignore */ }
 }
@@ -164,8 +209,9 @@ async function onRemote(cmd) {
   if (isMouse) { if (now - lastMouseNote > 60000) { lastMouseNote = now; notify('Jarvis — touchpad from your phone', 'The phone is controlling the mouse and keyboard.'); } }
   else if (tier !== 'ctl') notify('Jarvis — command from your phone', cmd.type + (cmd.arg ? ': ' + cmd.arg.slice(0, 80) : ''));
   const q = route(cmd.type, cmd.arg, cmd.arg2);
-  const r = WORKER_REMOTE[q.type] ? await runExtraAsync(q.type, q.arg, q.arg2)
+  let r = WORKER_REMOTE[q.type] ? await runExtraAsync(q.type, q.arg, q.arg2)
     : extra.handles(q.type) ? await extra.run(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2);
+  if (cmd.type === 'screenshot' && r.ok) { r = { ok: true, msg: 'Screenshot taken — sending it to your phone (Gallery → Jarvis).' }; shotToPhone(); }
   if (!isMouse) emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
   return r;
 }
@@ -369,7 +415,8 @@ app.whenReady().then(() => {
     readClipboard: () => { try { return clipboard.readText(); } catch (e) { return ''; } },
     runAction: runLocalAction,
     sendPhone: sendToPhone,
-    toPhone: async (c) => { const r = c.kind === 'url' ? await sendToPhone('url', c.value) : await sendToPhone('notify', c.value); return r.ok ? { ok: true, msg: c.kind === 'url' ? 'opened on your phone' : 'shown on your phone' } : r; },
+    toPhone: async (c) => { const r = c.kind === 'url' ? await sendToPhone('url', c.value) : await sendToPhone('setclip', c.value); return r.ok ? { ok: true, msg: c.kind === 'url' ? 'opened on your phone' : 'copied to your phone clipboard' } : r; },
+    fileToPhone: ballFileToPhone, stopListen: () => emit('ballStop', {}),
     getDisk: () => disk, getBattery: () => battery,
     getSelf: () => { try { const m = app.getAppMetrics(); return { cpu: +m.reduce((a, x) => a + (x.cpu.percentCPUUsage || 0), 0).toFixed(1), mb: Math.round(m.reduce((a, x) => a + (x.memory.workingSetSize || 0), 0) / 1024) }; } catch (e) { return null; } },
     scanProcs: () => new Promise((res) => {

@@ -28,7 +28,7 @@ function classifyDrop(text) {
   const t = String(text || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'))[0] || '';
   if (!t) return null;
   const m = t.match(/^https?:\/\/[^\s<>"]{3,1900}$/i);
-  return m ? { kind: 'url', value: m[0] } : { kind: 'text', value: String(text).trim().slice(0, 300) };
+  return m ? { kind: 'url', value: m[0] } : { kind: 'text', value: String(text).trim().slice(0, 4000) };
 }
 // buttons that run a local PC action (everything else on the panel is a fixed special id handled by the controller)
 const TILE_ACTIONS = { dl: ['openfolder', 'downloads'] };
@@ -82,7 +82,7 @@ const fmtMem = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 // ---------------------------------------------------------------- controller
 function createBall(ctx) {
   const { BrowserWindow, screen, ipcMain } = ctx.electron;
-  let w = null, expanded = false, pos = null, side = 'right', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null;
+  let w = null, expanded = false, pos = null, side = 'right', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null, ringing = false, ringTimer = null;
   const hist = { cpu: [], ram: [] };
   const wa = () => screen.getDisplayNearestPoint({ x: (pos ? pos.x : 0) + SIZE / 2, y: (pos ? pos.y : 0) + SIZE / 2 }).workArea;
   const alive = () => w && !w.isDestroyed();
@@ -155,7 +155,7 @@ function createBall(ctx) {
     w.on('blur', () => { /* stays open until the user closes it */ });
     w.loadURL('jarvis://ball/ball.html');
   }
-  function destroy() { stopStats(); clearTimeout(focusTimer); focusEnd = 0; if (alive()) w.destroy(); w = null; expanded = false; }
+  function destroy() { stopStats(); clearTimeout(focusTimer); clearTimeout(ringTimer); ringing = false; focusEnd = 0; if (alive()) w.destroy(); w = null; expanded = false; }
 
   // ---- IPC from the ball page
   onB('ball:drag-start', (sx, sy) => { if (!alive()) return; const b = w.getBounds(); drag = { sx: +sx || 0, sy: +sy || 0, x: b.x, y: b.y }; });
@@ -171,12 +171,22 @@ function createBall(ctx) {
   onB('ball:toggle', (open) => setExpanded(!!open));
   onB('ball:ask', (text) => { const t = String(text || '').slice(0, 400).trim(); if (t) ctx.ask(t); });
   onB('ball:listen', () => ctx.listen());
+  onB('ball:stoplisten', () => { if (ctx.stopListen) ctx.stopListen(); });
   handleB('ball:tile', async (id) => {
     id = String(id || '');
     try {
       if (id === 'jarvis') { ctx.showMain(); return { ok: true, msg: 'opened' }; }
       if (id === 'clip') { const c = classifyDrop(ctx.readClipboard()); if (!c) return { ok: false, msg: 'clipboard is empty' }; return await ctx.toPhone(c); }
-      if (id === 'find') { const r = await ctx.sendPhone('findphone', ''); return { ok: !!(r && r.ok), msg: r && r.ok ? 'phone is ringing' : (r && r.msg) || 'no answer' }; }
+      if (id === 'find') {                           // tap to start, tap again to stop
+        if (ringing) {
+          const r = await ctx.sendPhone('stopring', '');
+          if (r && r.ok) { ringing = false; clearTimeout(ringTimer); send('ring', { on: false }); }
+          return { ok: !!(r && r.ok), msg: r && r.ok ? 'phone stopped ringing' : (r && r.msg) || 'no answer' };
+        }
+        const r = await ctx.sendPhone('findphone', '');
+        if (r && r.ok) { ringing = true; send('ring', { on: true }); clearTimeout(ringTimer); ringTimer = setTimeout(() => { ringing = false; send('ring', { on: false }); }, 60000); if (ringTimer.unref) ringTimer.unref(); }
+        return { ok: !!(r && r.ok), msg: r && r.ok ? 'phone is ringing — tap again to stop' : (r && r.msg) || 'no answer' };
+      }
       if (id === 'scan') {
         const list = ctx.scanProcs ? await ctx.scanProcs() : [];
         if (!list || !list.length) return { ok: false, msg: 'could not read the process list' };
@@ -192,6 +202,13 @@ function createBall(ctx) {
       const a = TILE_ACTIONS[id]; if (!a) return { ok: false, msg: 'unknown button' };
       const r = await ctx.runAction(a[0], a[1], ''); return { ok: !!(r && r.ok), msg: String((r && r.msg) || (r && r.ok ? 'done' : 'failed')).slice(0, 80) };
     } catch (e) { return { ok: false, msg: 'failed' }; }
+  });
+  handleB('ball:dropfile', async (name, mime, data) => {
+    const buf = data && data.byteLength !== undefined ? Buffer.from(data) : null;
+    if (!buf || !buf.length) return { ok: false, msg: 'that file is empty' };
+    if (buf.length > 12 * 1000 * 1000) return { ok: false, msg: 'too big — the limit is 3 MB' };
+    if (!ctx.fileToPhone) return { ok: false, msg: 'files are not available' };
+    return await ctx.fileToPhone({ name: String(name || 'file').slice(0, 120), mime: String(mime || ''), data: buf });
   });
   handleB('ball:drop', async (text) => { const c = classifyDrop(text); if (!c) return { ok: false, msg: 'nothing to send' }; return await ctx.toPhone(c); });
 
