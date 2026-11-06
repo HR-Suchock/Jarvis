@@ -13,7 +13,22 @@ const { createActions, TIER } = require('./actions');
 const { Relay } = require('./relay');
 const proto = require('./link-protocol');
 const { createBall } = require('./ball');
-const extra = require('./pc-extra-actions')({ clipboard, shell, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
+// a file from the phone: pictures go to Pictures\Jarvis, everything else to Downloads\Jarvis (never overwrites; never opened automatically)
+function saveFromPhone(name, mime, data) {
+  try {
+    const img = /^image\//i.test(mime);
+    const base = app.getPath(img ? 'pictures' : 'downloads');
+    const dir = path.join(base, 'Jarvis'); fs.mkdirSync(dir, { recursive: true });
+    const ext = path.extname(name), stem = path.basename(name, ext);
+    let target = path.join(dir, name), k = 1;
+    while (fs.existsSync(target) && k < 500) target = path.join(dir, stem + ' (' + (k++) + ')' + ext);
+    fs.writeFileSync(target, data, { flag: 'wx' });
+    notifyFile(path.basename(target), dir);
+    return { ok: true, msg: 'Saved on the PC: ' + path.basename(target) + ' (' + (img ? 'Pictures' : 'Downloads') + '\\Jarvis).' };
+  } catch (e) { return { ok: false, msg: 'Could not save the file on the PC.' }; }
+}
+function notifyFile(file, dir) { try { const n = new Notification({ title: 'Jarvis — file from your phone', body: file + ' was saved. Click to show it.', silent: false }); n.on('click', () => shell.openPath(dir)); n.show(); } catch (e) { /* ignore */ } }
+const extra = require('./pc-extra-actions')({ clipboard, shell, saveFile: saveFromPhone, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
 const TIERS = Object.assign({}, TIER, extra.TIER);
 
 const APP_URL = 'jarvis://app/';
@@ -156,7 +171,7 @@ function pushTiers() {
   try { const c = linkCfg(); if (xWorker) xWorker.postMessage({ tiers: { ctl: c.ctl === true, input: c.input === true, danger: c.danger === true } }); } catch (e) { /* ignore */ }
 }
 // Phone commands that need the worker's saved state (scheduled jobs, backups) go through here.
-const WORKER_REMOTE = { jobadd: 1, joblist: 1, jobdel: 1, backup: 1 };
+const WORKER_REMOTE = { jobadd: 1, joblist: 1, jobdel: 1, backup: 1, cleantemp: 1 };
 function runExtraAsync(type, arg, arg2) {
   return new Promise((resolve) => {
     try {
@@ -187,14 +202,20 @@ function route(type, arg, arg2) { const m = extra.remap ? extra.remap(type, arg)
 
 const recent = [], mouseRecent = [];
 let lastMouseNote = 0;
+const fileRecent = [];
 async function onRemote(cmd) {
   const c = linkCfg();
   const now = Date.now();
+  const isFile = cmd.type === 'filepart';
   const isMouse = cmd.type === 'mouse';             // touchpad moves arrive many times a second: own, higher limit
   if (isMouse) {
     while (mouseRecent.length && now - mouseRecent[0] > 1000) mouseRecent.shift();
     if (mouseRecent.length >= 120) return { ok: false, msg: 'Too fast.' };
     mouseRecent.push(now);
+  } else if (isFile) {                               // pieces of a file: own limit (a 3 MB file is about 85 pieces)
+    while (fileRecent.length && now - fileRecent[0] > 60000) fileRecent.shift();
+    if (fileRecent.length >= 400) return { ok: false, msg: 'Too many file pieces — try again in a minute.' };
+    fileRecent.push(now);
   } else {
     while (recent.length && now - recent[0] > 60000) recent.shift();
     if (recent.length >= 30) return { ok: false, msg: 'Too many commands in a minute — slow down.' };
@@ -275,7 +296,7 @@ function makeTray() {
   if (tray) return;
   tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
   tray.setToolTip('J.A.R.V.I.S');
-  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Jarvis', click: showWin }, { label: 'Show / hide floating ball (Ctrl+Alt+J)', click: () => { if (ball) ball.toggleVisible(); } }, { type: 'separator' }, { label: 'Quit', click: () => { quitting = true; app.quit(); } }]));
+  refreshTray();
   tray.on('click', showWin);
 }
 
@@ -296,7 +317,8 @@ function wireIpc() {
   });
   // floating ball: switch + messages from the main window
   on('ball:get', (e) => { e.returnValue = ballOn() ? '1' : ''; });
-  on('ball:set', (e, v) => { store.set('pref.ballOn', v ? '1' : '0'); if (ball) ball.setEnabled(!!v); e.returnValue = 'ok'; });
+  on('ball:set', (e, v) => { setBallOn(!!v); e.returnValue = 'ok'; });
+  ipcMain.on('ball:theme', (e, n) => { if (trusted(e) && ball && typeof n === 'string') ball.setTheme(n); });
   ipcMain.on('ball:text', (e, t) => { if (trusted(e) && ball && typeof t === 'string') ball.reply(t); });
   ipcMain.on('ball:state', (e, st) => { if (trusted(e) && ball && typeof st === 'string') ball.state(st); });
   on('sysinfo', (e) => {
@@ -381,6 +403,23 @@ function refreshDisk() {
 
 for (const sw of ['disable-background-networking', 'disable-component-update', 'no-pings', 'disable-sync']) { try { app.commandLine.appendSwitch(sw); } catch (e) { /* ignore */ } }
 try { app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication'); } catch (e) { /* ignore */ }
+// one switch for the floating ball: Settings, the tray menu and the ball's own right-click menu all use it
+function setBallOn(v) {
+  store.set('pref.ballOn', v ? '1' : '0');
+  if (ball) ball.setEnabled(!!v);
+  refreshTray();
+  emit('ballSetting', { on: !!v });
+}
+function refreshTray() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Jarvis', click: showWin },
+    { label: 'Floating ball', type: 'checkbox', checked: ballOn(), click: (i) => setBallOn(i.checked) },
+    { label: 'Show / hide the ball (Ctrl+Alt+J)', enabled: ballOn(), click: () => { if (ball) ball.toggleVisible(); } },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { quitting = true; app.quit(); } },
+  ]));
+}
 app.whenReady().then(() => {
   app.setAppUserModelId('com.suchock.jarvis.pc');
   store = new Store(app.getPath('userData'), safeStorage);
@@ -388,6 +427,7 @@ app.whenReady().then(() => {
     const u = new URL(req.url);
     let p = decodeURIComponent(u.pathname);
     const root = u.hostname === 'ball' ? BALL_DIR : RENDERER;           // jarvis://ball/ = the floating-ball page
+    if (u.hostname === 'ball' && p === '/fonts.css') return net.fetch(pathToFileURL(path.join(RENDERER, 'css', 'fonts.css')).toString());   // same fonts as the app
     if (!p || p === '/') p = u.hostname === 'ball' ? '/ball.html' : '/index.html';
     const full = path.normalize(path.join(root, p));
     if (!full.startsWith(root + path.sep)) return new Response('Forbidden', { status: 403 });
@@ -416,7 +456,12 @@ app.whenReady().then(() => {
     runAction: runLocalAction,
     sendPhone: sendToPhone,
     toPhone: async (c) => { const r = c.kind === 'url' ? await sendToPhone('url', c.value) : await sendToPhone('setclip', c.value); return r.ok ? { ok: true, msg: c.kind === 'url' ? 'opened on your phone' : 'copied to your phone clipboard' } : r; },
-    fileToPhone: ballFileToPhone, stopListen: () => emit('ballStop', {}),
+    fileToPhone: ballFileToPhone, menu: () => Menu.buildFromTemplate([
+      { label: 'Open Jarvis', click: () => showWin() },
+      { label: 'Hide the ball (Ctrl+Alt+J brings it back)', click: () => ball && ball.toggleVisible() },
+      { type: 'separator' },
+      { label: 'Turn off the floating ball', click: () => setBallOn(false) },
+    ]).popup(), stopListen: () => emit('ballStop', {}),
     getDisk: () => disk, getBattery: () => battery,
     getSelf: () => { try { const m = app.getAppMetrics(); return { cpu: +m.reduce((a, x) => a + (x.cpu.percentCPUUsage || 0), 0).toFixed(1), mb: Math.round(m.reduce((a, x) => a + (x.memory.workingSetSize || 0), 0) / 1024) }; } catch (e) { return null; } },
     scanProcs: () => new Promise((res) => {

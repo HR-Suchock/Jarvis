@@ -34,6 +34,12 @@ function classifyDrop(text) {
 const TILE_ACTIONS = { dl: ['openfolder', 'downloads'] };
 
 const HN = 60;                                   // samples kept for the graphs (3 s apart = 3 minutes)
+/** a circle of diameter d as 1-pixel-high rectangles (what Electron's setShape takes) */
+function circleRects(d) {
+  const r = d / 2, out = [];
+  for (let y = 0; y < d; y++) { const dy = y + 0.5 - r, half = Math.sqrt(Math.max(0, r * r - dy * dy)); const x0 = Math.round(r - half), x1 = Math.round(r + half); if (x1 > x0) out.push({ x: x0, y, width: x1 - x0, height: 1 }); }
+  return out;
+}
 const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 /** % per minute the series is rising (+) or falling (-): mean of the last third against the first third. */
 function slope(arr, stepSec) {
@@ -82,7 +88,7 @@ const fmtMem = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 // ---------------------------------------------------------------- controller
 function createBall(ctx) {
   const { BrowserWindow, screen, ipcMain } = ctx.electron;
-  let w = null, expanded = false, pos = null, side = 'right', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null, ringing = false, ringTimer = null;
+  let w = null, expanded = false, pos = null, side = 'right', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null, ringing = false, ringTimer = null, themeName = 'cyan';
   const hist = { cpu: [], ram: [] };
   const wa = () => screen.getDisplayNearestPoint({ x: (pos ? pos.x : 0) + SIZE / 2, y: (pos ? pos.y : 0) + SIZE / 2 }).workArea;
   const alive = () => w && !w.isDestroyed();
@@ -127,7 +133,16 @@ function createBall(ctx) {
     const area = wa();
     if (expanded) { const b = expandBounds(pos.x, pos.y, area); side = b.side; w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }); }
     else { const s = snapPosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side; w.setBounds({ x: pos.x, y: pos.y, width: SIZE, height: SIZE }); }
+    reshape();
     send('init', { side, expanded });
+  }
+  // the window is only as big as the orb and its clickable area is an exact circle (no invisible square around it)
+  function reshape() {
+    if (!alive() || !w.setShape) return;
+    try {
+      if (expanded) { const bb = w.getBounds(); w.setShape([{ x: 0, y: 0, width: bb.width, height: bb.height }]); return; }
+      w.setShape(circleRects(SIZE));
+    } catch (e) { /* not supported on this system: the transparent window is used as it is */ }
   }
   function setExpanded(on) {
     if (!alive() || expanded === on) return; expanded = on;
@@ -142,14 +157,14 @@ function createBall(ctx) {
     const s = snapPosition(pos.x, pos.y, area); pos = { x: s.x, y: s.y }; side = s.side; expanded = false;
     w = new BrowserWindow({
       width: SIZE, height: SIZE, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
-      skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, focusable: true, title: 'Jarvis ball', backgroundColor: '#00000000',
+      skipTaskbar: true, alwaysOnTop: true, hasShadow: false, thickFrame: false, roundedCorners: false, show: false, focusable: true, title: 'Jarvis ball', backgroundColor: '#00000000',
       webPreferences: { preload: path.join(__dirname, 'ball-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: true },
     });
     w.setAlwaysOnTop(true, 'floating');
     w.setMenuBarVisibility(false);
     w.webContents.on('will-navigate', (e) => e.preventDefault());
     w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    w.webContents.once('did-finish-load', () => { send('init', { side, expanded }); send('focus', { end: focusEnd }); if (w.isVisible()) startStats(); });
+    w.webContents.once('did-finish-load', () => { send('init', { side, expanded }); send('focus', { end: focusEnd }); send('theme', { name: themeName }); if (w.isVisible()) startStats(); });
     w.once('ready-to-show', () => { if (enabled) { w.showInactive(); startStats(); } });
     w.on('closed', () => { stopStats(); w = null; expanded = false; });
     w.on('blur', () => { /* stays open until the user closes it */ });
@@ -171,6 +186,7 @@ function createBall(ctx) {
   onB('ball:toggle', (open) => setExpanded(!!open));
   onB('ball:ask', (text) => { const t = String(text || '').slice(0, 400).trim(); if (t) ctx.ask(t); });
   onB('ball:listen', () => ctx.listen());
+  onB('ball:menu', () => { if (ctx.menu) ctx.menu(); });
   onB('ball:stoplisten', () => { if (ctx.stopListen) ctx.stopListen(); });
   handleB('ball:tile', async (id) => {
     id = String(id || '');
@@ -212,8 +228,9 @@ function createBall(ctx) {
   });
   handleB('ball:drop', async (text) => { const c = classifyDrop(text); if (!c) return { ok: false, msg: 'nothing to send' }; return await ctx.toPhone(c); });
 
+  function setTheme(n) { themeName = /^(cyan|amber|red|purple|mark|friday|green)$/.test(n) ? n : 'cyan'; send('theme', { name: themeName }); }
   return {
-    create, destroy,
+    setTheme, create, destroy,
     setEnabled(on) { enabled = !!on; if (enabled) { create(); if (alive() && !w.isVisible() && !w.webContents.isLoading()) { w.showInactive(); startStats(); } } else destroy(); },
     isEnabled: () => enabled,
     toggleVisible() { if (!alive()) return; if (w.isVisible()) { w.hide(); stopStats(); } else { w.showInactive(); startStats(); } },
@@ -225,4 +242,4 @@ function createBall(ctx) {
   };
 }
 
-module.exports = { createBall, snapPosition, expandBounds, classifyDrop, level, insight, chips, parseTasklist, slope, TILE_ACTIONS, SIZE, PANEL_W, PANEL_H };
+module.exports = { circleRects, createBall, snapPosition, expandBounds, classifyDrop, level, insight, chips, parseTasklist, slope, TILE_ACTIONS, SIZE, PANEL_W, PANEL_H };

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('jarvisBall', {
   toggle: (open) => ipcRenderer.send('ball:toggle', !!open),
   ask: (text) => ipcRenderer.send('ball:ask', String(text || '')),
   listen: () => ipcRenderer.send('ball:listen'),
+  menu: () => ipcRenderer.send('ball:menu'),
   stopListen: () => ipcRenderer.send('ball:stoplisten'),
   dropFile: (name, mime, data) => ipcRenderer.invoke('ball:dropfile', String(name || ''), String(mime || ''), data),
   tile: (id) => ipcRenderer.invoke('ball:tile', String(id || '')),

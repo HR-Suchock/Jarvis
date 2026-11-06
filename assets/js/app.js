@@ -106,6 +106,7 @@
     if (n === 'cyan') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', n);
     try { if (window.Orb && Orb.setTheme) Orb.setTheme(THEME_RGB[n]); } catch (e) { /* ignore */ }
     try { if (B && B.setWidgetTheme) B.setWidgetTheme(n); } catch (e) { /* ignore */ }
+    try { if (B && B.ballTheme) B.ballTheme(n); } catch (e) { /* ignore */ }      // the PC floating ball wears the same colours
   }
   function applyOrbStyle(n) { try { if (window.Orb && Orb.setStyle) Orb.setStyle(n === 'minimal' || n === 'dense' ? n : 'classic'); } catch (e) { /* ignore */ } }
   var saveTimer = 0;
@@ -2188,6 +2189,12 @@
     linkResult: function (d) { var cb = linkWait[d.id]; if (cb) { delete linkWait[d.id]; cb(d); } },
     linkStatus: function (d) { linkOn = !!d.connected; var e = document.getElementById('link-status'); if (e) e.textContent = linkOn ? 'CONNECTED' : 'WAITING'; if (!linkOn) noteOnline(null); updatePcChip(); },
     ballAsk: function (d) { if (PC && d && d.text) { stopSpeakingNow(); handleUser(String(d.text).slice(0, 400), false); } },
+    fileProgress: function (d) {
+      var msg = (d.name ? d.name + ' \u2014 ' : '') + (d.msg || '') + (!d.done && d.pct ? ' (' + d.pct + '%)' : '');
+      if (fileStatusEl && fileStatusEl.isConnected) { fileStatusEl.textContent = msg; fileStatusEl.className = 'dl-file' + (d.done ? (d.ok ? ' ok' : ' bad') : ''); }
+      if (d.done) toast(d.ok ? 'Sent to your PC \u2713' : (d.msg || 'Could not send the file'), d.ok ? 3200 : 6000);
+    },
+    ballSetting: function (d) { toast(d && d.on ? 'Floating ball on' : 'Floating ball off'); },
     ballStop: function () { if (PC && state === 'listening') stopListening(); },
     ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
@@ -2549,6 +2556,7 @@
   }
 
   /* ------------------------------------------------------------------ settings: device link */
+  var fileStatusEl = null;
   function buildLinkSection() {
     var other = PC ? 'phone' : 'PC', OTHER = PC ? 'PHONE' : 'PC';
     var sl = section('DEVICE LINK', PC
@@ -2600,14 +2608,72 @@
       box.appendChild(toggleRow(PC ? 'Allow power commands' : 'Allow calls and texts', PC ? 'Let the phone shut down, restart or sleep this PC' : 'Let the PC make calls and send SMS from this phone',
         function () { return !!linkState().danger; }, function (v) { B.linkSet(JSON.stringify({ danger: v })); }));
       if (PC) box.appendChild(toggleRow('Start with Windows', 'Starts Jarvis hidden in the tray when you sign in', function () { return !!linkState().autostart; }, function (v) { B.linkSet(JSON.stringify({ autostart: v })); }));
-      var r3 = row(); r3.style.marginTop = '10px';
-      r3.appendChild(btn('TEST LINK', 'pri', function () {
-        toast('Pinging your ' + other + '\u2026', 2000);
-        var id = B.linkPing(); linkWait[id] = function (d) { toast(d.ok ? 'Your ' + other + ' answered \u2713' : d.msg, 4200); };
-      }));
-      r3.appendChild(btn('SHOW PAIRING CODE', '', function () { var o = jp(B.linkCode()); if (o.ok) showCode(o.code); }));
-      box.appendChild(r3);
-      var hh = el('div', 'dl-note', 'Health tools:'); box.appendChild(hh);
+      // ---- how the page is arranged: one short heading per job, buttons in an even grid under it
+      function grp(title, sub) { var g = el('div', 'dl-grp', title); box.appendChild(g); if (sub) box.appendChild(el('div', 'dl-sub', sub)); }
+      function grid(cols) { var g = el('div', 'dl-grid' + (cols === 2 ? ' two' : '')); box.appendChild(g); return g; }
+      function gb(g, txt, cls, fn) { var b = btn(txt, cls, fn); g.appendChild(b); return b; }
+      function send(g, label, type, arg, opt) {
+        opt = opt || {};
+        var armedT = 0;
+        return gb(g, label, opt.cls || '', function (ev) {
+          var b = ev.currentTarget;
+          if (opt.confirm && !b.dataset.armed) {                       // risky: first tap arms the button, second tap does it
+            b.dataset.armed = '1'; b.dataset.label = b.textContent; b.textContent = 'TAP AGAIN TO CONFIRM'; b.classList.add('danger');
+            armedT = setTimeout(function () { delete b.dataset.armed; b.textContent = b.dataset.label; if (opt.cls !== 'danger') b.classList.remove('danger'); }, 4000); return;
+          }
+          if (b.dataset.armed) { clearTimeout(armedT); delete b.dataset.armed; b.textContent = b.dataset.label; if (opt.cls !== 'danger') b.classList.remove('danger'); }
+          linkSend(type, arg, '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), opt.long ? 9000 : 3200); });
+        });
+      }
+      grp('CONNECTION');
+      var gc = grid(2);
+      gb(gc, 'TEST LINK', 'pri', function () {
+        toast('Pinging your ' + other + '…', 2000);
+        var id = B.linkPing(); linkWait[id] = function (d) { toast(d.ok ? 'Your ' + other + ' answered ✓' : d.msg, 4200); };
+      });
+      gb(gc, 'SHOW PAIRING CODE', '', function () { var o = jp(B.linkCode()); if (o.ok) showCode(o.code); });
+      if (!PC) {
+        grp('REMOTE', 'Use your PC from here.');
+        var gr = grid(2);
+        gb(gr, 'TOUCHPAD', 'pri', function () { if (settingsOpen) closeSettings(); openTouchpad(); });
+        send(gr, 'LOCK PC', 'lock', '');
+        grp('SOUND & MEDIA');
+        var gs = grid(3);
+        send(gs, 'VOL −', 'volume', 'downstep'); send(gs, 'MUTE', 'volume', 'mute'); send(gs, 'VOL +', 'volume', 'upstep');
+        send(gs, 'PLAY / PAUSE', 'media', 'play'); send(gs, 'RANDOM MUSIC', 'playrandom', 'music'); send(gs, 'STOP PLAYER', 'stopmedia', '');
+        grp('SCREEN');
+        var gd = grid(2);
+        send(gd, 'BRIGHT −', 'brightness', 'down'); send(gd, 'BRIGHT +', 'brightness', 'up'); send(gd, 'DARK MODE', 'darkmode', 'toggle');
+        send(gd, 'SCREENSHOT', 'screenshot', '', { cls: '' });
+        grp('SEND TO THE PC', 'Photos and files (up to 3 MB) are saved in the PC’s Pictures\\Jarvis or Downloads\\Jarvis folder.');
+        var gf = grid(2);
+        gb(gf, 'SEND PHOTO / FILE', 'pri', function () { try { if (!B.linkPickFile || !B.linkPickFile()) toast('Could not open the file picker', 3000); } catch (e) { toast('Could not open the file picker', 3000); } });
+        gb(gf, 'SEND CLIPBOARD', '', function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); });
+        fileStatusEl = el('div', 'dl-file'); box.appendChild(fileStatusEl);
+        grp('MANAGE THE PC', 'Read-only reports, plus a safe cleanup.');
+        var gm = grid(3);
+        send(gm, 'PC STATUS', 'pcinfo', 'status', { long: true }); send(gm, 'TOP APPS', 'procs', '', { long: true }); send(gm, 'NETWORK', 'netinfo', '', { long: true });
+        send(gm, 'STARTUP APPS', 'startups', '', { long: true }); send(gm, 'TASK MANAGER', 'taskmgr', ''); send(gm, 'CLEAN TEMP', 'cleantemp', '', { confirm: true, long: true });
+        grp('WAKE THE PC', 'Works when this phone is on the same Wi-Fi as the PC.');
+        //(wake note moved to the heading) box.appendChild(el('div', 'dl-note', 'Wake the PC \u2014 works when this phone is on the same Wi-Fi as the PC. First time: with the PC on, tap LEARN FROM PC, then SET UP ON PC. Wake-on-LAN must also be enabled in the PC\u2019s BIOS.'));
+        var mac = inp('AA:BB:CC:DD:EE:FF'); mac.value = store.get('pcmac') || ''; box.appendChild(mac);
+        var rw = el('div', 'dl-grid two'); rw.style.marginTop = '8px';
+        rw.appendChild(btn('LEARN FROM PC', '', function () { linkSend('pcinfo', 'mac', '', function (d) { var a = macOf(d.msg); if (d.ok && a) { mac.value = a; store.set('pcmac', a); toast('Saved the PC address', 3000); } else toast(d.msg || 'Could not read it', 4200); }); }));
+        rw.appendChild(btn('SAVE', '', function () { var a = macOf(mac.value); if (!a) { toast('That is not a valid address', 3200); return; } mac.value = a; store.set('pcmac', a); toast('Saved', 2000); }));
+        rw.appendChild(btn('SET UP ON PC', '', function () { toast('Asking the PC\u2026', 2000); linkSend('wolsetup', '', '', function (d) { toast(d.msg, 7000); }); }));
+        rw.appendChild(btn('WAKE NOW', 'pri', function () { var a = macOf(mac.value) || store.get('pcmac'); if (!a) { toast('Enter or learn the PC address first', 3200); return; } store.set('pcmac', a); wakePcNow(); }));
+        box.appendChild(rw);
+        grp('SCHEDULED JOBS', 'Things you asked the PC to do later.');
+        var gj = grid(2);
+        gb(gj, 'SCHEDULED JOBS', '', function () { linkSend('joblist', '', '', function (d) { toast(d.msg, 8000); }); });
+        gb(gj, 'CANCEL ALL JOBS', 'danger', function () { linkSend('jobdel', 'all', '', function (d) { toast(d.msg, 4000); }); });
+      } else {
+        grp('SOUND'); var gs2 = grid(3);
+        send(gs2, 'VOL −', 'volume', 'down'); send(gs2, 'PLAY / PAUSE', 'media', 'play'); send(gs2, 'VOL +', 'volume', 'up');
+        grp('FLASHLIGHT'); var gt = grid(2); send(gt, 'TORCH ON', 'torch', 'on'); send(gt, 'TORCH OFF', 'torch', 'off');
+        grp('FIND MY PHONE'); var gp = grid(2); send(gp, 'RING PHONE', 'findphone', '', { cls: 'pri' }); send(gp, 'STOP RING', 'stopring', '');
+      }
+      grp('HEALTH & HELP');
       var testBox = el('div', 'st-box'), logBox = el('div', 'st-box');
       function showLog() {
         if (logBox.firstChild) { logBox.innerHTML = ''; return; }
@@ -2615,32 +2681,13 @@
         var pre = el('pre', 'rules'); pre.textContent = lkText(); logBox.appendChild(pre);
         var lr = row(); lr.appendChild(btn('COPY LOG', '', function () { copyTxt(lkText()); })); lr.appendChild(btn('CLEAR LOG', 'danger', function () { store.set(LOGKEY, '[]'); pre.textContent = lkText(); toast('Log cleared'); })); logBox.appendChild(lr);
       }
-      var r5 = row(); r5.style.flexWrap = 'wrap';
-      r5.appendChild(btn('RUN FULL CHECK', 'pri', function () { logBox.innerHTML = ''; runSelfTest(testBox); }));
-      r5.appendChild(btn('COMMAND LOG', '', showLog));
-      r5.appendChild(btn('COPY DIAGNOSTICS', '', function () { copyTxt(buildDiag()); }));
-      box.appendChild(r5); box.appendChild(testBox); box.appendChild(logBox);
-      if (!PC) {
-        var rj = row(); rj.style.flexWrap = 'wrap'; rj.appendChild(btn('SCHEDULED JOBS', '', function () { linkSend('joblist', '', '', function (d) { toast(d.msg, 8000); }); })); rj.appendChild(btn('CANCEL ALL JOBS', 'danger', function () { linkSend('jobdel', 'all', '', function (d) { toast(d.msg, 5000); }); })); box.appendChild(rj);
-        box.appendChild(el('div', 'dl-note', 'Wake the PC \u2014 works when this phone is on the same Wi-Fi as the PC. First time: with the PC on, tap LEARN FROM PC, then SET UP ON PC. Wake-on-LAN must also be enabled in the PC\u2019s BIOS.'));
-        var mac = inp('AA:BB:CC:DD:EE:FF'); mac.value = store.get('pcmac') || ''; box.appendChild(mac);
-        var rw = row(); rw.style.cssText = 'margin:8px 0 10px;flex-wrap:wrap';
-        rw.appendChild(btn('LEARN FROM PC', '', function () { linkSend('pcinfo', 'mac', '', function (d) { var a = macOf(d.msg); if (d.ok && a) { mac.value = a; store.set('pcmac', a); toast('Saved the PC address', 3000); } else toast(d.msg || 'Could not read it', 4200); }); }));
-        rw.appendChild(btn('SAVE', '', function () { var a = macOf(mac.value); if (!a) { toast('That is not a valid address', 3200); return; } mac.value = a; store.set('pcmac', a); toast('Saved', 2000); }));
-        rw.appendChild(btn('SET UP ON PC', '', function () { toast('Asking the PC\u2026', 2000); linkSend('wolsetup', '', '', function (d) { toast(d.msg, 7000); }); }));
-        rw.appendChild(btn('WAKE NOW', 'pri', function () { var a = macOf(mac.value) || store.get('pcmac'); if (!a) { toast('Enter or learn the PC address first', 3200); return; } store.set('pcmac', a); wakePcNow(); }));
-        box.appendChild(rw);
-      }
-      var qh = el('div', 'dl-note', 'Quick controls for your ' + OTHER + ':'); box.appendChild(qh);
-      var quick = PC
-        ? [['VOL +', 'volume', 'up'], ['VOL \u2212', 'volume', 'down'], ['PLAY / PAUSE', 'media', 'play'], ['TORCH ON', 'torch', 'on'], ['TORCH OFF', 'torch', 'off'], ['RING PHONE', 'findphone', ''], ['STOP RING', 'stopring', '']]
-        : [['LOCK PC', 'lock', ''], ['PC STATUS', 'pcinfo', 'status'], ['VOL +', 'volume', 'upstep'], ['VOL \u2212', 'volume', 'downstep'], ['MUTE', 'volume', 'mute'], ['PLAY / PAUSE', 'media', 'play'], ['RANDOM MUSIC', 'playrandom', 'music'], ['STOP PLAYER', 'stopmedia', ''], ['BRIGHT +', 'brightness', 'up'], ['BRIGHT \u2212', 'brightness', 'down'], ['DARK MODE', 'darkmode', 'toggle'], ['SCREENSHOT', 'screenshot', '']];
-      var qr = el('div', 'row'); qr.style.cssText = 'margin:0 0 10px;flex-wrap:wrap';
-      quick.forEach(function (q) { qr.appendChild(btn(q[0], '', function () { linkSend(q[1], q[2], '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), 3200); }); })); });
-      if (!PC) qr.appendChild(btn('TOUCHPAD', 'pri', function () { if (settingsOpen) closeSettings(); openTouchpad(); }));
-      if (!PC) qr.appendChild(btn('SEND CLIPBOARD', '', function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); }));
-      box.appendChild(qr);
-      var r4 = row(); r4.appendChild(btn('UNPAIR', 'danger', function () { B.linkUnpair(); noteOnline(null); toast('Unpaired'); render(); })); box.appendChild(r4);
+      var gh = grid(3);
+      gb(gh, 'RUN FULL CHECK', 'pri', function () { logBox.innerHTML = ''; runSelfTest(testBox); });
+      gb(gh, 'COMMAND LOG', '', showLog);
+      gb(gh, 'COPY DIAGNOSTICS', '', function () { copyTxt(buildDiag()); });
+      box.appendChild(testBox); box.appendChild(logBox);
+      grp('DANGER ZONE');
+      var gu = grid(2); gb(gu, 'UNPAIR', 'danger', function () { B.linkUnpair(); noteOnline(null); toast('Unpaired'); render(); });
     }
     function showCode(code) {
       box.innerHTML = '';
@@ -2709,6 +2756,7 @@
       tw.appendChild(b);
     });
     var twc = el('div', 'card'); twc.style.padding = '12px'; twc.appendChild(tw); sa.appendChild(twc);
+    if (PC) sa.appendChild(toggleRow('Floating ball', 'The always-on-top Jarvis orb (Ctrl+Alt+J shows or hides it; right-click the ball or the tray icon for the same switch)', function () { try { var q = B.permissions(); if (typeof q === 'string') q = JSON.parse(q); return !!q.ball; } catch (e) { return false; } }, function (v) { B.setBall(v); toast(v ? 'Floating ball on' : 'Floating ball off'); }));
     var ot = el('div', 'themes');
     [['classic', 'Classic reactor'], ['minimal', 'Minimal rings'], ['dense', 'Dense tech']].forEach(function (o2) {
       var b2 = el('button', 'theme-dot' + ((S.orbStyle || 'classic') === o2[0] ? ' on' : ''), o2[1]);
@@ -2880,7 +2928,7 @@
       ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › Neural Link</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next automatically.</p>'],
       ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p>'],
       ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
-      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
+      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it. Turn it off in Settings › Appearance, from the tray icon, or by right-clicking the ball. It follows your colour theme.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
       ['7 · Quick tile', '<ul><li><b>Quick tile:</b> pull down the notification shade, tap the pencil or edit icon and drag the <b>Jarvis</b> tile into your quick settings. Tap it to start talking.</li></ul>'],
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
@@ -2890,7 +2938,8 @@
       ['12 · Voice and language', '<p>In <b>Settings › Voice</b> choose the voice style, speed and language (English, Bangla or Hindi). Use <b>TEST ENGLISH</b> and the other test buttons to hear it. If a voice sounds wrong, install the language voice from your phone’s text-to-speech settings.</p>'],
       ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p>'],
       ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this phone and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p>'],
-      ['15 · If something does not work', '<ul><li><b>“Invalid key” or 401:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
+            ['15 · Photos, files and PC tools', '<ul><li><b>Phone to PC:</b> <b>Settings › Device Link › SEND TO THE PC › SEND PHOTO / FILE</b>. Up to 3 MB; photos are shrunk automatically. They land in the PC’s <b>Pictures\\Jarvis</b> or <b>Downloads\\Jarvis</b> folder.</li><li><b>PC to phone:</b> drop a file on the PC floating ball. Photos go to <b>Pictures/Jarvis</b>, other files to <b>Downloads/Jarvis</b> on the phone. Copied text arrives in the phone clipboard.</li><li><b>Manage the PC:</b> PC STATUS, TOP APPS, NETWORK, STARTUP APPS, TASK MANAGER and CLEAN TEMP (asks twice, removes only old temp files).</li><li><b>VOL − / VOL +</b> change the PC volume by 2% per tap.</li><li>If a file will not send, publish the latest Firebase rule once (Device Link › rules › COPY).</li></ul>'],
+      ['16 · If something does not work', '<ul><li><b>“Invalid key” or 401:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
     ];
     MAN.forEach(function (m, i) {
       var d = el('details', 'man'); if (i === 0) d.open = true;
@@ -2988,7 +3037,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.27.1' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.28.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }

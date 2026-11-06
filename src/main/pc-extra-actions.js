@@ -32,6 +32,8 @@ const TIER = {
   // v1.24.0
   jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input', mediakey: 'ctl',
   logoff: 'danger', emptybin: 'danger',
+  // v1.28.0: PC management + files from the phone
+  procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', filepart: 'ctl',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
   stopmedia: 'input'
@@ -119,6 +121,15 @@ function make(deps) {
           (e, stdout, stderr) => resolve({ ok: !e, out: String(stdout || '').trim(), err: String((stderr || (e && e.message)) || '').trim() }));
       } catch (e) { resolve({ ok: false, out: '', err: String(e && e.message || e) }); }
     });
+  }
+
+  const inbound = new Map();
+  const BLOCKED_EXT = /\.(exe|bat|cmd|msi|vbs|vbe|ps1|psm1|scr|com|js|jse|wsf|lnk|jar|dll|reg|hta|cpl|msc|apk|sh)$/i;
+  function cleanName(n) {
+    n = String(n == null ? '' : n).replace(/\\/g, '/'); n = n.slice(n.lastIndexOf('/') + 1).replace(/[\x00-\x1f<>:"|?*]/g, '_').trim();
+    while (n.startsWith('.')) n = n.slice(1);
+    if (n.length > 80) n = n.slice(-80);
+    return n || 'from-phone';
   }
   const WINMSG = 'This command only works on Windows.';
   const R = (ok, msg) => ({ ok: !!ok, msg: msg });
@@ -406,6 +417,86 @@ function make(deps) {
   const press = (vk) => ['k ' + vk + ' 0', 'k ' + vk + ' 2'];
 
   const H = {
+
+    // ---------------------------------------------------------------- v1.28.0 PC management tools (all read-only except cleantemp)
+    async procs() {
+      if (platform !== 'win32') return R(false, WINMSG);
+      const out = await new Promise((res) => { try { exec('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 8000, maxBuffer: 4 << 20 }, (e, o) => res(e ? null : String(o))); } catch (e) { res(null); } });
+      if (!out) return R(false, 'I could not read the running programs.');
+      const m = new Map();
+      for (const line of out.split(/\r?\n/)) {
+        const c = line.match(/^"([^"]+)","[^"]*","[^"]*","[^"]*","([\d.,\s]+)\s*K"/i); if (!c) continue;
+        const nm = c[1].replace(/\.exe$/i, ''), kb = parseInt(c[2].replace(/[^\d]/g, ''), 10);
+        if (kb && !/^system idle process$/i.test(nm)) m.set(nm, (m.get(nm) || 0) + kb / 1024);
+      }
+      const top = [...m].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, mb]) => n + ' ' + (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'));
+      return top.length ? R(true, 'Biggest memory users: ' + top.join(', ') + '.') : R(false, 'I could not read the running programs.');
+    },
+    async netinfo() {
+      const base = 'Address ' + ipLine();
+      if (platform !== 'win32') return R(true, base + '.');
+      const out = await new Promise((res) => { try { exec('netsh', ['wlan', 'show', 'interfaces'], { windowsHide: true, timeout: 6000 }, (e, o) => res(e ? '' : String(o))); } catch (e) { res(''); } });
+      const ssid = (out.match(/^\s*SSID\s*:\s*(.+)$/im) || [])[1], sig = (out.match(/^\s*Signal\s*:\s*(\d+)%/im) || [])[1];
+      return R(true, ssid ? 'Wi-Fi "' + clip(ssid.trim(), 40) + '"' + (sig ? ' (signal ' + sig + '%)' : '') + '. ' + base + '.' : 'Wired or no Wi-Fi. ' + base + '.');
+    },
+    async startups() {
+      const r = await ps('Get-CimInstance Win32_StartupCommand | ForEach-Object { $_.Name } | Select-Object -Unique -First 14', {}, 12000);
+      if (!r.ok) return fail(r, 'I could not read the startup programs.');
+      const names = r.out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+      return names.length ? R(true, 'Starting with Windows: ' + names.join(', ') + '.') : R(true, 'No startup programs found.');
+    },
+    async taskmgr() {
+      if (platform !== 'win32') return R(false, WINMSG);
+      try { exec('cmd', ['/c', 'start', '', 'taskmgr'], { windowsHide: true, timeout: 5000 }, () => {}); } catch (e) { return R(false, 'I could not open Task Manager.'); }
+      return R(true, 'Opening Task Manager.');
+    },
+    async cleantemp() {
+      const dir = os.tmpdir();
+      if (!/temp|tmp/i.test(dir) || dir.length < 8) return R(false, 'I will not clean that folder.');
+      const cutoff = Date.now() - 48 * 3600 * 1000;
+      let files = 0, bytes = 0, seen = 0;
+      const walk = (d, depth) => {
+        let list = []; try { list = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+        for (const ent of list) {
+          if (++seen > 30000) return;
+          const full = path.join(d, ent.name);
+          try {
+            if (ent.isSymbolicLink()) continue;
+            if (ent.isDirectory()) { if (depth < 4) walk(full, depth + 1); continue; }
+            const st = fs.statSync(full);
+            if (st.mtimeMs < cutoff && st.atimeMs < cutoff) { fs.unlinkSync(full); files++; bytes += st.size; }
+          } catch (e) { /* in use or protected: skip it */ }
+        }
+      };
+      walk(dir, 0);
+      return R(true, files ? 'Cleaned ' + files + ' old temporary files (' + (bytes / 1048576).toFixed(1) + ' MB freed).' : 'The temp folder is already tidy (nothing older than two days).');
+    },
+    // a file sent from the phone arrives in numbered pieces; the finished file is handed to deps.saveFile
+    async filepart(metaJson, b64) {
+      try {
+        const m = JSON.parse(String(metaJson || '{}'));
+        const id = String(m.id || '').replace(/[^A-Za-z0-9_-]/g, ''); const i = m.i | 0, n = m.n | 0, size = +m.size || 0;
+        if (id.length < 4 || id.length > 40 || n < 1 || n > 120 || i < 0 || i >= n || size < 1 || size > 3000000) return R(false, 'That file transfer was not valid.');
+        const name = cleanName(m.name), mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(String(m.mime || '')) ? String(m.mime).toLowerCase() : 'application/octet-stream';
+        if (BLOCKED_EXT.test(name)) return R(false, 'I do not accept that type of file (programs and scripts are refused).');
+        const part = Buffer.from(String(b64 || ''), 'base64');
+        if (!part.length || part.length > 300000) return R(false, 'That piece of the file was not valid.');
+        const now = Date.now();
+        for (const [k, v] of inbound) if (now - v.t > 300000) inbound.delete(k);
+        let f = inbound.get(id);
+        if (i === 0) { if (!f && inbound.size >= 3) return R(false, 'Too many files at once.'); f = { n, size, next: 0, parts: [], got: 0, t: now }; inbound.set(id, f); }
+        if (!f || f.next !== i || f.n !== n) { inbound.delete(id); return R(false, 'File pieces arrived out of order. Please send it again.'); }
+        f.got += part.length; if (f.got > size) { inbound.delete(id); return R(false, 'The file was larger than announced.'); }
+        f.parts.push(part); f.next++; f.t = now;
+        if (f.next < n) return R(true, 'Piece ' + f.next + ' of ' + n + '.');
+        inbound.delete(id);
+        const data = Buffer.concat(f.parts);
+        if (data.length !== size) return R(false, 'The file arrived incomplete. Please send it again.');
+        if (!deps.saveFile) return R(false, 'This PC cannot save files.');
+        return await deps.saveFile(name, mime, data);
+      } catch (e) { return R(false, 'Could not receive the file.'); }
+    },
+
     async pcinfo(arg) {
       switch (String(arg || 'status').toLowerCase()) {
         case 'time': { const n = Date.now(); return R(true, 'PC time ' + new Date(n).toLocaleTimeString() + ' (epoch ' + n + ')'); }

@@ -4,10 +4,14 @@
 (function () {
   var J = window.jarvisBall, $ = function (id) { return document.getElementById(id); };
   var wrap = $('wrap'), orb = $('orb'), status = $('status'), reply = $('reply'), q = $('q'), card = $('card'), cv = $('core'), cx = cv.getContext('2d');
-  var CY = '53,214,255', AM = '255,176,64', RD = '255,90,90', last = null, focusEnd = 0, focusTick = null;
+  var CY = '25,227,255', AM = '255,176,64', RD = '255,90,90', last = null, focusEnd = 0, focusTick = null;
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = 316 * dpr; cv.height = 118 * dpr; cx.scale(dpr, dpr);
 
+  function theme(name) {
+    var r = document.documentElement; if (/^(amber|red|purple|mark|friday|green)$/.test(name || '')) r.setAttribute('data-theme', name); else r.removeAttribute('data-theme');
+    CY = (getComputedStyle(r).getPropertyValue('--cyrgb') || '25,227,255').trim(); if (last) draw(last);
+  }
   function say(t) { status.textContent = String(t || '').slice(0, 60); }
   function setExpanded(on) { wrap.classList.toggle('collapsed', !on); if (on) setTimeout(function () { q.focus(); }, 80); }
   function setState(s) { orb.className = 'orb' + (s && s !== 'idle' ? ' ' + s : ''); $('mic').classList.toggle('on', s === 'listening'); if (s) say(s === 'idle' ? 'ready' : s); }
@@ -84,6 +88,7 @@
     else if (ev === 'reply') { reply.textContent = d.text; reply.scrollTop = 0; if (wrap.classList.contains('collapsed')) say(''); }
     else if (ev === 'state') setState(d.state);
     else if (ev === 'status') say(d.text);
+    else if (ev === 'theme') theme(d.name);
     else if (ev === 'focus') setFocus(d.end);
     else if (ev === 'ring') { $('find-l').textContent = d.on ? 'STOP RINGING' : 'LOCATE PHONE'; $('m-find').classList.toggle('run', !!d.on); }
     else if (ev === 'inputfocus') { setTimeout(function () { q.focus(); }, 40); }
@@ -126,5 +131,5 @@
     if (!t) return; say('sending to phone…');
     J.drop(t).then(function (r) { say(r && r.msg ? r.msg : 'sent'); }, function () { say('failed'); });
   });
-  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); J.menu(); });
 })();

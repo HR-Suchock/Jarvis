@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   },
   ballText: (t) => ipcRenderer.send('ball:text', String(t || '')),
   ballState: (st) => ipcRenderer.send('ball:state', String(st || '')),
+  ballTheme: (n) => ipcRenderer.send('ball:theme', String(n || '')),
   ballGet: () => sync('ball:get') === '1',
   ballSet: (v) => sync('ball:set', !!v),
   onNative: (cb) => ipcRenderer.on('native', (_e, ev, data) => cb(ev, data)),

@@ -182,6 +182,7 @@
     // phone-only features: harmless no-ops here
     // floating ball: the PC has its own always-on-top ball window (see src/main/ball.js)
     setBall: function (on) { try { return P.ballSet ? P.ballSet(!!on) : 'ok'; } catch (e) { return 'ok'; } },
+    ballTheme: function (n) { try { P.ballTheme && P.ballTheme(n); } catch (e) { /* */ } },
     ballState: function (st) { try { P.ballState && P.ballState(st); } catch (e) { /* */ } },
     ballText: function (t) { try { P.ballText && P.ballText(t); } catch (e) { /* */ } },
     ballCall: function () { },
