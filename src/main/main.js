@@ -233,6 +233,10 @@ async function onRemote(cmd) {
   let r = WORKER_REMOTE[q.type] ? await runExtraAsync(q.type, q.arg, q.arg2)
     : extra.handles(q.type) ? await extra.run(q.type, q.arg, q.arg2) : actions.run(q.type, q.arg, q.arg2);
   if (cmd.type === 'screenshot' && r.ok) { r = { ok: true, msg: 'Screenshot taken — sending it to your phone (Gallery → Jarvis).' }; shotToPhone(); }
+  if (isFile) {                                      // a file arrives in ~85 pieces: never push each 48 KB piece (or a chat line per piece) to the window
+    if (!r.ok || !/^Piece \d+ of \d+/.test(r.msg || '')) emit('linkIn', { type: 'filepart', arg: '', ok: r.ok, msg: r.msg });
+    return r;
+  }
   if (!isMouse) emit('linkIn', { type: cmd.type, arg: cmd.arg, ok: r.ok, msg: r.msg });
   return r;
 }
@@ -273,7 +277,14 @@ function createWindow(hidden) {
     minWidth: 420, minHeight: 580, show: false, title: 'J.A.R.V.I.S', backgroundColor: '#02070d',
     icon: ICON, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: true },
+  });  let reloads = 0, hangTimer = null;
+  win.webContents.on('render-process-gone', (e, d) => {                       // the page crashed: bring it back instead of leaving a blank window
+    if (quitting || (d && d.reason === 'clean-exit') || reloads++ > 3) return;
+    setTimeout(() => { try { if (win && !win.isDestroyed()) win.webContents.reload(); } catch (x) { /* ignore */ } }, 600);
   });
+  win.on('unresponsive', () => { clearTimeout(hangTimer); hangTimer = setTimeout(() => { try { if (win && !win.isDestroyed() && reloads++ < 3) win.webContents.reload(); } catch (x) { /* ignore */ } }, 12000); });
+  win.on('responsive', () => clearTimeout(hangTimer));
+
   if (sb && sb.max) win.maximize();
   win.on('resize', saveBounds); win.on('move', saveBounds); win.on('maximize', saveBounds); win.on('unmaximize', saveBounds);
   win.removeMenu();
@@ -400,6 +411,16 @@ function refreshDisk() {
   const p = process.platform === 'win32' ? (process.env.SystemDrive || 'C:') + '\\' : '/';
   fs.promises.statfs(p).then((s) => { disk = { total: s.blocks * s.bsize, free: s.bavail * s.bsize }; }).catch(() => {});
 }
+
+// ---- stability: nothing in the background may take the app down, and a PC whose graphics driver keeps crashing falls back to software drawing
+const GPU_FLAG = path.join(app.getPath('userData'), 'no-gpu');
+try { if (fs.existsSync(GPU_FLAG)) app.disableHardwareAcceleration(); } catch (e) { /* ignore */ }
+let gpuCrashes = 0;
+app.on('child-process-gone', (e, d) => {
+  if (d && d.type === 'GPU' && d.reason !== 'clean-exit' && ++gpuCrashes >= 2) { try { fs.writeFileSync(GPU_FLAG, '1'); } catch (x) { /* ignore */ } }   // used from the next start
+});
+process.on('uncaughtException', (e) => { try { console.error('uncaught', e && e.message); } catch (x) { /* ignore */ } });
+process.on('unhandledRejection', (e) => { try { console.error('unhandled', e && e.message); } catch (x) { /* ignore */ } });
 
 for (const sw of ['disable-background-networking', 'disable-component-update', 'no-pings', 'disable-sync']) { try { app.commandLine.appendSwitch(sw); } catch (e) { /* ignore */ } }
 try { app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication'); } catch (e) { /* ignore */ }

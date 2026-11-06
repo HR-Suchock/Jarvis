@@ -125,29 +125,38 @@ function createBall(ctx) {
     if (ram >= 92) { hot++; if (hot >= 3 && now - lastRamNote > 30 * 60000) { lastRamNote = now; ctx.notify('Jarvis — memory is almost full', 'RAM is at ' + ram + '%. Closing a few apps will make the PC faster.'); } } else hot = 0;
     if (disk >= 95 && now - lastDiskNote > 24 * 3600000) { lastDiskNote = now; ctx.notify('Jarvis — disk is almost full', 'The system drive is ' + disk + '% full.'); }
   }
-  function startStats() { if (!statTimer) { statTimer = setInterval(tickStats, 3000); tickStats(); } }
+  // a collapsed ball only needs its colour now and then; the open panel updates a little faster
+  function startStats() { if (!statTimer) { statTimer = setInterval(tickStats, expanded ? 3000 : 6000); tickStats(); } }
+  function restartStats() { if (statTimer) { stopStats(); startStats(); } }
   function stopStats() { if (statTimer) { clearInterval(statTimer); statTimer = null; } }
 
   function applyBounds() {
     if (!alive()) return;
     const area = wa();
-    if (expanded) { const b = expandBounds(pos.x, pos.y, area); side = b.side; w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }); }
-    else { const s = snapPosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side; w.setBounds({ x: pos.x, y: pos.y, width: SIZE, height: SIZE }); }
-    reshape();
+    if (expanded) {
+      const b = expandBounds(pos.x, pos.y, area); side = b.side;
+      w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }, false);
+      reshape();                                     // grow first, then open the click area
+    } else {
+      const s = snapPosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side;
+      reshape();                                     // shrink the click area to the circle first, so no square ever flashes
+      w.setBounds({ x: pos.x, y: pos.y, width: SIZE, height: SIZE }, false);
+    }
     send('init', { side, expanded });
   }
   // the window is only as big as the orb and its clickable area is an exact circle (no invisible square around it)
   function reshape() {
     if (!alive() || !w.setShape) return;
     try {
-      if (expanded) { const bb = w.getBounds(); w.setShape([{ x: 0, y: 0, width: bb.width, height: bb.height }]); return; }
+      if (expanded) { const e = expandBounds(pos.x, pos.y, wa()); w.setShape([{ x: 0, y: 0, width: e.width, height: e.height }]); return; }
       w.setShape(circleRects(SIZE));
     } catch (e) { /* not supported on this system: the transparent window is used as it is */ }
   }
   function setExpanded(on) {
     if (!alive() || expanded === on) return; expanded = on;
     if (on) { w.setFocusable(true); }
-    applyBounds(); if (on) { w.focus(); send('inputfocus'); tickStats(); }
+    applyBounds(); restartStats();
+    if (on) { w.focus(); send('inputfocus'); setTimeout(() => { try { if (expanded) tickStats(); } catch (e) { /* ignore */ } }, 90); }   // the panel appears first, the numbers follow
   }
 
   function create() {
@@ -165,6 +174,7 @@ function createBall(ctx) {
     w.webContents.on('will-navigate', (e) => e.preventDefault());
     w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     w.webContents.once('did-finish-load', () => { send('init', { side, expanded }); send('focus', { end: focusEnd }); send('theme', { name: themeName }); if (w.isVisible()) startStats(); });
+    w.webContents.on('render-process-gone', () => { const was = enabled; destroy(); if (was && enabled) setTimeout(() => { try { create(); } catch (e) { /* ignore */ } }, 800); });
     w.once('ready-to-show', () => { if (enabled) { w.showInactive(); startStats(); } });
     w.on('closed', () => { stopStats(); w = null; expanded = false; });
     w.on('blur', () => { /* stays open until the user closes it */ });
