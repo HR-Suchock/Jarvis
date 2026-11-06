@@ -471,6 +471,7 @@ app.whenReady().then(() => {
   });
   ball.setEnabled(ballOn());
   try { globalShortcut.register('Control+Alt+J', () => { if (ball) ball.toggleVisible(); }); } catch (e) { /* shortcut taken */ }
+  try { globalShortcut.register('Control+Alt+Space', () => { emit('ballListen', {}); }); } catch (e) { /* shortcut taken */ }
   applyLink();
   try { getXWorker(); } catch (e) { /* scheduler is optional */ }
   setTimeout(() => { try { getXWorker().postMessage({ warm: true }); } catch (e) { /* optional */ } }, 4000);

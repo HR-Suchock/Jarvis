@@ -81,7 +81,7 @@
   /* ------------------------------------------------------------------ settings */
   var DEFAULTS = {
     name: 'sir', active: 'gemini', providers: {}, fallback: true,
-    speak: true, handsFree: false, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
+    speak: true, handsFree: false, wake: false, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
     systemPrompt: '', style: 'jarvis', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
     services: { tvKey: '', gsKey: '', gsCx: '', owKey: '', city: '', units: 'metric' }
   };
@@ -93,6 +93,7 @@
     for (var k in DEFAULTS) s[k] = (o[k] !== undefined) ? o[k] : DEFAULTS[k];
     if (typeof s.providers !== 'object' || !s.providers) s.providers = {};
     s.services = Object.assign({}, DEFAULTS.services, o.services || {});
+    if (PC && o.handsFree === undefined) s.handsFree = true;        // the PC is voice first: after a reply Jarvis keeps listening (say "stop" to end)
     if (s.voiceMode !== 'phone') s.voiceMode = 'jarvis';
     if (['cyan', 'amber', 'red', 'green', 'purple', 'mark', 'friday'].indexOf(s.theme) < 0) s.theme = 'cyan';
     if (o.ttsEngine !== undefined && o.voiceMode === undefined) { s.rate = Math.min(s.rate, 1.5); }
@@ -264,7 +265,7 @@
     state = s;
     try { B && B.ballState && B.ballState(s); } catch (e) { /* */ }
     Orb.setState(s);
-    if (PC) perfGov();
+    if (PC) { perfGov(); try { B && B.wakePause && B.wakePause(s !== 'idle'); } catch (e) { /* */ } }
     statusEl.textContent = STATUS[s];
     statusEl.className = 'status' + (s === 'thinking' ? ' think' : '');
     micEl.className = 'mic' + (s === 'idle' ? '' : ' ' + s);
@@ -1335,6 +1336,12 @@
       return { kind: 'ui', fn: function () { var last = ''; for (var i = history.length - 2; i >= 0; i--) if (history[i].role === 'assistant') { last = history[i].content; break; } if (B && B.copyText) B.copyText(last); }, text: 'Copied to the clipboard.' };
     if (/^(?:good morning|good evening|good afternoon|briefing|daily briefing|brief me|status report|status)$/.test(t))
       return { kind: 'brief' };
+    if (/^(?:open |show |show me )?(?:my |the )?(?:dashboard|home dashboard|overview)$/.test(t))
+      return { kind: 'ui', fn: openDashboard, text: 'Opening your dashboard, ' + addrName() + '.', silent: true };
+    if ((m = t.match(/^(?:what(?:'s| is| do i have)?(?: on)?|show|open|check|read)?\s*(?:me )?(?:my |the )?(?:phone )?(?:calendar|agenda|schedule|events|appointments|meetings)(?: for| on)?(?: (today|tomorrow|this week|next week|the week))?$|^what do i have (today|tomorrow|this week)$|^do i have (?:any )?(?:events|meetings|appointments)(?: (today|tomorrow|this week))?$/)))
+      { var w = m[1] || m[2] || m[3] || 'today'; return { kind: 'cal', days: /tomorrow/.test(w) ? 2 : /week/.test(w) ? 7 : 1, label: w === 'the week' ? 'this week' : w }; }
+    if (/^(?:what(?:'s| is) my )?next (?:event|meeting|appointment)$|^when(?:'s| is) my next (?:event|meeting|appointment)$/.test(t))
+      return { kind: 'cal', days: 7, label: 'this week', next: true };
     if (/^(?:system monitor|show (?:me )?(?:the )?(?:system )?(?:graphs?|charts?|monitor|dashboard|stats|statistics)|(?:battery|system|usage) graphs?|dashboard|my stats|show my stats|usage report|weekly report|activity report)$/.test(t))
       return { kind: 'ui', fn: openMonitor, text: 'Opening the system monitor, ' + addrName() + '.', silent: true };
     if (/^(?:how much )?(?:storage|free space|disk space|space)(?: (?:do i have|is left|is free|left|is used|used))?(?: on my phone)?$|^how much (?:storage|space) (?:do i have|is left|is free|have i (?:got|used))$/.test(t))
@@ -1629,6 +1636,7 @@
     if (li.kind === 'remote') { runRemote(li); return; }
     if (li.kind === 'tool') { runLocalTool(li); return; }
     if (li.kind === 'sys') { var sd = sysGet(); respond(li.fn(sd)); if (li.card) sysCard(li.card, sd); return; }
+    if (li.kind === 'cal') { calCommand(li); return; }
     if (li.kind === 'brief') { setState('thinking'); briefing(function (t) { respond(t); }); return; }
     if (li.kind === 'ui') {
       li.fn();
@@ -1807,6 +1815,7 @@
     ['PHONE & APPS', [['Open YouTube', 'open youtube', 1], ['Open WhatsApp', 'open whatsapp'], ['Flashlight on', 'flashlight on', 1], ['Volume up', 'volume up', 1], ['Wi-Fi settings', 'wifi settings'], ['Go home', 'go home'], ['Battery level', 'battery level', 1]]],
     ['CALLS & MESSAGES', [['Call Mom', 'call mom'], ['Text Mom', 'send a text to mom saying I am running late'], ['Navigate home', 'navigate to home']]],
     ['TIME & REMINDERS', [['What time is it', 'what time is it', 1], ['Timer 5 min', 'set a timer for 5 minutes', 1], ['Wake me at 7', 'wake me at 7 am'], ['In 20 min…', 'remind me in 20 minutes to drink water'], ['Every day at 8', 'remind me every day at 8 am to take medicine'], ['Every Friday', 'remind me every friday at 6 pm to call family'], ['Weekdays alarm', 'set an alarm on weekdays at 6:30 am'], ['Snooze 10 min', 'snooze 10 minutes'], ['My reminders', 'show my reminders', 1]]],
+    ['CALENDAR & DASHBOARD', [['Dashboard', 'dashboard', 1], ['My calendar', 'what is on my calendar', 1], ['Calendar tomorrow', 'calendar tomorrow', 1], ['Next meeting', 'next meeting', 1]]],
     ['NOTES & MATH', [['Remember…', 'remember '], ['Show my notes', 'show my notes', 1], ['Delete note 1', 'delete note 1'], ['15% of 240', 'what is 15% of 240', 1], ['Good morning', 'good morning', 1]]],
     ['ROUTINES', [['My routines', 'my routines', 1], ['Leaving home', 'leaving home', 1], ['I am home', 'i am home', 1]]],
     ['MEMORY & SAFETY', [['Remember…', 'remember my '], ['What do you remember', 'what do you remember', 1], ['Forget…', 'forget my '], ['Offline mode', 'offline mode', 1]]],
@@ -1926,6 +1935,104 @@
     return out + '</svg>';
   }
   var monP = null, monTimer = 0;
+  /* ------------------------------------------------------------------ calendar (read-only, from the phone) and dashboard */
+  function calGet(days, cb) {
+    if (!PC) {
+      var r = {}; try { r = jparse(B && B.calendarEvents ? B.calendarEvents(days) : '{}'); } catch (e) { r = {}; }
+      if (!r.perm) { cb({ ok: false, perm: false, events: [], msg: B && B.calendarEvents ? 'The calendar is not allowed yet.' : 'The calendar works only on the phone app.' }); return; }
+      cb({ ok: true, perm: true, events: Array.isArray(r.events) ? r.events : [] }); return;
+    }
+    linkSend('calendar', String(days), '', function (r) {
+      if (!r.ok) { cb({ ok: false, events: [], msg: r.msg }); return; }
+      var ev = []; try { ev = JSON.parse(r.raw); } catch (e) { ev = []; }
+      cb({ ok: true, perm: true, events: Array.isArray(ev) ? ev : [] });
+    });
+  }
+  function calDay(ts) {
+    var d = new Date(ts), n = new Date(), t = new Date(); t.setDate(t.getDate() + 1);
+    if (d.toDateString() === n.toDateString()) return 'Today';
+    if (d.toDateString() === t.toDateString()) return 'Tomorrow';
+    return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' });
+  }
+  function calTime(e) {
+    if (e.a) return 'All day';
+    var f = { hour: 'numeric', minute: '2-digit' };
+    return new Date(e.s).toLocaleTimeString([], f) + ' – ' + new Date(e.e).toLocaleTimeString([], f);
+  }
+  function calHtml(events, empty) {
+    if (!events.length) return '<div class="empty-note" style="margin:10px 4px">' + esc(empty || 'Nothing planned.') + '</div>';
+    var h = '', last = '';
+    events.forEach(function (e) {
+      var dl = calDay(e.s);
+      if (dl !== last) { h += '<div class="cal-day">' + esc(dl.toUpperCase()) + '</div>'; last = dl; }
+      h += '<div class="cal-ev"><span class="cal-t">' + esc(calTime(e)) + '</span><b>' + esc(e.t || '(no title)') + '</b>' + (e.l ? '<span class="cal-l">' + esc(e.l) + '</span>' : '') + '</div>';
+    });
+    return h;
+  }
+  function calSpeech(events, label) {
+    if (!events.length) return 'Nothing in your calendar ' + label + ', ' + addrName() + '.';
+    var parts = events.slice(0, 4).map(function (e) { return (label === 'today' || label === 'tomorrow' ? '' : calDay(e.s) + ', ') + (e.a ? 'all day' : 'at ' + new Date(e.s).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ', ' + (e.t || 'an event'); });
+    return 'You have ' + events.length + ' event' + (events.length > 1 ? 's' : '') + ' ' + label + ': ' + parts.join('; ') + (events.length > 4 ? '; and ' + (events.length - 4) + ' more.' : '.');
+  }
+  function calCommand(li) {
+    setState('thinking');
+    calGet(li.days, function (r) {
+      if (!r.ok) { respond(r.perm === false ? (B && B.calendarEvents ? 'I need permission to read your calendar, ' + addrName() + '. Open the dashboard and tap ALLOW CALENDAR.' : r.msg) : r.msg); return; }
+      var now = Date.now(), end = new Date(); end.setHours(0, 0, 0, 0); end = end.getTime() + li.days * 86400000;
+      var ev = r.events.filter(function (e) { return e.s < end; });
+      if (li.next) ev = ev.filter(function (e) { return !e.a && e.e > now; }).slice(0, 1);
+      var text = li.next ? (ev.length ? 'Your next event is ' + (ev[0].t || 'an event') + ', ' + calDay(ev[0].s).toLowerCase() + ' at ' + new Date(ev[0].s).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.' : 'Nothing coming up, ' + addrName() + '.') : calSpeech(ev, li.label);
+      respond(text);
+      addCard('<div class="rc-h">CALENDAR · ' + esc(li.label.toUpperCase()) + '</div><div class="cal">' + calHtml(ev) + '</div>');
+    });
+  }
+  var dashP = null, dashTimer = null;
+  function openDashboard() {
+    if (!dashP) dashP = makePanel('dash', 'DASHBOARD');
+    var b = dashP.body, cal, wx;
+    function head() {
+      var d = new Date(), h = d.getHours(), g = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+      return '<div class="gcard dash-head"><div class="dash-time">' + esc(d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + '</div><div class="dash-date">' + esc(d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })) + '</div><div class="dash-g">' + esc(g + ', ' + addrName() + '.') + '</div></div>';
+    }
+    function rings() {
+      var d = sysGet();
+      return '<div class="gcard"><h4>' + (PC ? 'THIS PC' : 'THIS PHONE') + '</h4><div class="grings">' +
+        ringSvg(d.batt === undefined ? 0 : d.batt, 'BATTERY', d.batt === undefined ? 'no battery' : d.charging ? 'charging' : 'on battery', 'var(--cy)') +
+        ringSvg(d.ramPct === undefined ? 0 : d.ramPct, 'MEMORY', d.ramUsedMB !== undefined ? Math.round(d.ramUsedMB / 102.4) / 10 + ' / ' + Math.round(d.ramTotalMB / 102.4) / 10 + ' GB' : '—', 'var(--cy2)') +
+        ringSvg(d.stoPct === undefined ? 0 : d.stoPct, 'STORAGE', d.stoFreeGB !== undefined ? d.stoFreeGB + ' GB free' : '—', 'var(--am)') + '</div></div>';
+    }
+    function lists() {
+      var rt = remToday(), nt = notesGet();
+      return '<div class="gcard"><h4>REMINDERS TODAY</h4>' + (rt.length ? rt.slice(0, 5).map(function (x) { return '<div class="irow"><span>' + esc(x) + '</span></div>'; }).join('') : '<div class="empty-note" style="margin:10px 4px">None left today.</div>') + '</div>' +
+        '<div class="gcard"><h4>NOTES (' + nt.length + ')</h4>' + (nt.length ? nt.slice(-3).reverse().map(function (x) { return '<div class="irow"><span>' + esc(String(x).slice(0, 90)) + '</span></div>'; }).join('') : '<div class="empty-note" style="margin:10px 4px">No notes yet. Say “remember …”.</div>') + '</div>';
+    }
+    b.innerHTML = '';
+    var top = el('div'); top.innerHTML = head(); b.appendChild(top);
+    var wxc = el('div', 'gcard'); wxc.innerHTML = '<h4>WEATHER</h4>'; b.appendChild(wxc); wx = el('div', 'dash-wx'); wxc.appendChild(wx);
+    if (hasWeather() && S.services.city) { wx.textContent = 'Checking…'; runTool('weather', S.services.city, function (d2) { wx.textContent = d2.ok ? formatWeather(d2.data) : 'Weather is not available right now.'; }); }
+    else { wx.className = 'empty-note'; wx.textContent = 'Add a free OpenWeather key and a city in Settings › Services to see the weather here.'; }
+    var cc = el('div', 'gcard'); cc.innerHTML = '<h4>CALENDAR · NEXT 3 DAYS' + (PC ? ' (FROM YOUR PHONE)' : '') + '</h4>'; b.appendChild(cc); cal = el('div', 'cal'); cc.appendChild(cal);
+    function loadCal() {
+      cal.innerHTML = '<div class="empty-note" style="margin:10px 4px">' + (PC ? 'Asking your phone…' : 'Loading…') + '</div>';
+      calGet(3, function (r) {
+        if (r.ok) { cal.innerHTML = calHtml(r.events, 'Nothing planned for the next 3 days.'); return; }
+        cal.innerHTML = '<div class="empty-note" style="margin:10px 4px">' + esc(r.msg || 'The calendar is not available.') + '</div>';
+        if (!PC && r.perm === false && B && B.requestCalendar) {
+          var row = el('div', 'row'), bt = el('button', 'btn pri', 'ALLOW CALENDAR'); bt.addEventListener('click', function () { B.requestCalendar(); }); row.appendChild(bt); cal.appendChild(row);
+        } else if (PC) { var r2 = el('div', 'row'), rb = el('button', 'btn', 'TRY AGAIN'); rb.addEventListener('click', loadCal); r2.appendChild(rb); cal.appendChild(r2); }
+      });
+    }
+    loadCal();
+    var rg = el('div'); rg.innerHTML = rings() + lists(); b.appendChild(rg);
+    var qr = el('div', 'dl-grid two');
+    [['SYSTEM GRAPHS', openMonitor], ['REFRESH', function () { openDashboard(); }]].forEach(function (x) { var q = el('button', 'btn', x[0]); q.addEventListener('click', x[1]); qr.appendChild(q); });
+    b.appendChild(qr);
+    dashP.open();
+    clearInterval(dashTimer);
+    dashTimer = setInterval(function () { if (!dashP.isOpen) { clearInterval(dashTimer); return; } top.innerHTML = head(); rg.innerHTML = rings() + lists(); }, 30000);
+    dashP.refreshCal = loadCal;
+  }
+
   function openMonitor() {
     if (!monP) monP = makePanel('mon', 'SYSTEM MONITOR');
     function render() {
@@ -2196,6 +2303,14 @@
     },
     ballSetting: function (d) { toast(d && d.on ? 'Floating ball on' : 'Floating ball off'); },
     ballStop: function () { if (PC && state === 'listening') stopListening(); },
+    wakeHeard: function (d) {
+      if (!PC || !S.wake || state !== 'idle') return;
+      handsFreeSuspended = false; emptyListens = 0;
+      var rest = String((d && d.rest) || '').trim();
+      if (rest.length >= 3) { handleUser(rest, true); return; }
+      startListening();
+    },
+    wakeError: function (d) { S.wake = false; save(); toast((d && d.msg) || 'The wake word stopped.', 4200); },
     ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
     wakeResult: function (d) { respond(d.msg || (d.ok ? 'Done.' : 'That failed.')); if (d.ok) wakeWatch(); },
@@ -2256,7 +2371,7 @@
     tool: function (d) { var cb = pendingChat['t' + d.id]; if (cb) { delete pendingChat['t' + d.id]; cb(d); } },
     models: function (d) { var cb = pendingChat['m' + d.id]; if (cb) { delete pendingChat['m' + d.id]; cb(d); } },
     permissions: function () {
-      renderPerms();
+      renderPerms(); if (dashP && dashP.isOpen && dashP.refreshCal) dashP.refreshCal();
       if (pendingListen) { pendingListen = false; if (perms().mic) setTimeout(startListening, 250); }
     },
     monitor: function () { if (settingsOpen) closeSettings(); setTimeout(openMonitor, 350); },
@@ -2773,7 +2888,7 @@
     var hb = el('button', 'btn pri', 'OPEN HISTORY'), cb2 = el('button', 'btn', 'ALL COMMANDS');
     hb.addEventListener('click', function () { openHistory(''); }); cb2.addEventListener('click', openCmds);
     hr.appendChild(hb); hr.appendChild(cb2); sh.appendChild(hr);
-    var hr2 = el('div', 'row'); hr2.style.margin = '10px 0 0'; var mb = el('button', 'btn', 'SYSTEM MONITOR & GRAPHS'); mb.addEventListener('click', openMonitor); hr2.appendChild(mb);
+    var hr2 = el('div', 'row'); hr2.style.margin = '10px 0 0'; var db0 = el('button', 'btn pri', 'DASHBOARD'); db0.addEventListener('click', function () { closeSettings(); setTimeout(openDashboard, 350); }); hr2.appendChild(db0); var mb = el('button', 'btn', 'SYSTEM MONITOR & GRAPHS'); mb.addEventListener('click', openMonitor); hr2.appendChild(mb);
     var mm = el('button', 'btn', 'MEMORY'); mm.addEventListener('click', openMemory); hr2.appendChild(mm);
     var rr = el('button', 'btn', 'ROUTINES'); rr.addEventListener('click', openRoutines); hr2.appendChild(rr);
     sh.appendChild(toggleRow('Include news in my morning briefing', 'Needs a web search key in Services', function () { return S.briefNews !== false; }, function (v) { S.briefNews = v; })); sh.appendChild(hr2);
@@ -2851,6 +2966,7 @@
     var s4 = section(PC ? 'PC ACCESS' : 'PHONE ACCESS', PC ? 'Voice input sends short recordings of your voice to Groq, OpenAI or Gemini (whichever key you added) to turn them into text. Nothing is recorded until you press the microphone.' : 'Jarvis needs these to call people, find contacts and hear you. Opening apps, YouTube, maps, timers and the flashlight need nothing extra.');
     var host = el('div'); host.id = 'perm-host'; s4.appendChild(host);
     if (PC) {
+      s4.appendChild(toggleRow('Say \u201cJarvis\u201d to wake him', 'Jarvis listens for his name while this app is open (also when only the floating ball shows). Only short, loud bursts of speech are sent for transcription, at most 10 a minute, and anything without his name is thrown away. Say \u201cJarvis, open Chrome\u201d in one go. Ctrl+Alt+Space also starts listening from anywhere.', function () { return !!S.wake; }, function (v) { S.wake = v; try { B.wakeSet(v); } catch (e) { /* */ } if (v) toast('Say \u201cJarvis\u201d any time', 3000); }));
       s4.appendChild(toggleRow('Keep listening after replies', 'Hands-free inside the app. Say \u201cstop\u201d to end.', function () { return S.handsFree; }, function (v) { S.handsFree = v; handsFreeSuspended = false; }));
       body.appendChild(s4);
     } else {
@@ -2938,8 +3054,10 @@
       ['12 · Voice and language', '<p>In <b>Settings › Voice</b> choose the voice style, speed and language (English, Bangla or Hindi). Use <b>TEST ENGLISH</b> and the other test buttons to hear it. If a voice sounds wrong, install the language voice from your phone’s text-to-speech settings.</p>'],
       ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p>'],
       ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this phone and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p>'],
-            ['15 · Photos, files and PC tools', '<ul><li><b>Phone to PC:</b> <b>Settings › Device Link › SEND TO THE PC › SEND PHOTO / FILE</b>. Up to 3 MB; photos are shrunk automatically. They land in the PC’s <b>Pictures\\Jarvis</b> or <b>Downloads\\Jarvis</b> folder.</li><li><b>PC to phone:</b> drop a file on the PC floating ball. Photos go to <b>Pictures/Jarvis</b>, other files to <b>Downloads/Jarvis</b> on the phone. Copied text arrives in the phone clipboard.</li><li><b>Manage the PC:</b> PC STATUS, TOP APPS, NETWORK, STARTUP APPS, TASK MANAGER and CLEAN TEMP (asks twice, removes only old temp files).</li><li><b>VOL − / VOL +</b> change the PC volume by 2% per tap.</li><li>If a file will not send, publish the latest Firebase rule once (Device Link › rules › COPY).</li></ul>'],
-      ['16 · If something does not work', '<ul><li><b>“Invalid key” or 401:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
+            ['15 · Wake the PC', '<p>Switch your PC on from this phone, even when it is off or asleep.</p><ol><li>Open <b>Settings › Device Link › WAKE THE PC</b> while the PC is on and linked.</li><li>Tap <b>LEARN FROM PC</b>, then <b>SAVE</b> (or type the address yourself).</li><li>Tap <b>SET UP ON PC</b> once, so the PC network card accepts the wake signal.</li><li>Later, tap <b>WAKE NOW</b> or say “wake my PC”. Jarvis tells you when the PC is awake.</li></ol><p>The phone must be on the <b>same Wi-Fi</b> as the PC, and <b>Wake-on-LAN</b> must be on in the PC’s BIOS. A PC that is fully powered off on battery, or a laptop with the lid closed, may not wake.</p>'],
+      ['16 · Calendar and dashboard', '<p>Say <b>“dashboard”</b> for one screen with the time, weather, your next events, reminders, notes and battery.</p><ul><li>Say “what is on my calendar”, “calendar tomorrow” or “next meeting”.</li><li>The first time, tap <b>ALLOW CALENDAR</b> on the dashboard. Jarvis only <b>reads</b> titles, times and places. Nothing is changed or uploaded.</li><li>On the PC the dashboard shows your phone calendar through the private link.</li></ul>'],
+      ['17 · PC voice and “Jarvis”', '<ul><li>On the PC, voice comes first: Jarvis keeps listening after each reply (say “stop” to end).</li><li><b>Ctrl+Alt+Space</b> starts listening from anywhere.</li><li>Switch on <b>Say “Jarvis” to wake him</b> in Settings › PC Access. Say “Jarvis” alone, or “Jarvis, open Chrome” in one go.</li><li>Only short bursts of speech are sent for transcription (at most 10 a minute). Anything without his name is discarded. Switch it off any time.</li></ul>'],
+      ['18 · If something does not work', '<ul><li><b>“Invalid key” or 401:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
     ];
     MAN.forEach(function (m, i) {
       var d = el('details', 'man'); if (i === 0) d.open = true;
@@ -3037,7 +3155,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.28.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.29.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3112,7 +3230,7 @@
   /* ------------------------------------------------------------------ wire up */
   function buildChips() {
     var items = [
-      ['✦ All commands', '__cmds'], ['▥ System graphs', 'system monitor'], ['Open YouTube', 'open youtube'], ['What time is it', 'what time is it'], ['Battery level', 'battery level'],
+      ['✦ All commands', '__cmds'], ['◫ Dashboard', 'dashboard'], ['▥ System graphs', 'system monitor'], ['Open YouTube', 'open youtube'], ['What time is it', 'what time is it'], ['Battery level', 'battery level'],
       ['Flashlight on', 'flashlight on'], ['Call…', null, 'call '], ['Set a timer', 'set a timer for 5 minutes'],
       ['Tell me a joke', 'tell me a joke'], ['Navigate…', null, 'navigate to ']
     ];
@@ -3184,6 +3302,7 @@
     runBoot();
   }
 
+  if (PC && S.wake) setTimeout(function () { try { B.wakeSet(true); } catch (e) { /* */ } }, 3500);
   window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

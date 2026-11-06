@@ -129,6 +129,68 @@
     });
   }
 
+  /* ---------------------------------------------------------------- "Jarvis" wake word (opt-in).
+     Nothing leaves the PC until a short, loud burst of speech (0.3-3.5 s) is heard. Only that burst is sent to the speech key you already added,
+     at most 10 times a minute. If the text contains "Jarvis" Jarvis wakes up; otherwise the text is thrown away. */
+  var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis)\b[\s,.:;!?-]*/i;
+  var wk = null, wakePaused = false, wakeCalls = [], wakeLang = 'en-GB';
+  function wakeStop() {
+    if (!wk) return; var r = wk; wk = null; r.dead = true;
+    try { r.node.disconnect(); r.src.disconnect(); } catch (e) { /* */ }
+    try { r.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* */ }
+    try { r.ctx.close(); } catch (e) { /* */ }
+  }
+  function wakeStart() {
+    if (wk) return; wk = { dead: false, starting: true };
+    var AC = window.AudioContext || window.webkitAudioContext;
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+      if (!wk || wk.dead) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+      var ctx = new AC(), src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(4096, 1, 1);
+      var r = wk = { stream: stream, ctx: ctx, src: src, node: node, dead: false };
+      var rate = ctx.sampleRate, floor = 0.004, pre = [], got = [], speaking = false, t0 = 0, quietSince = 0, voiced = 0, frames = 0, busy = false;
+      node.onaudioprocess = function (e) {
+        if (r.dead) return;
+        var d = e.inputBuffer.getChannelData(0), sum = 0, i, now = Date.now();
+        if (wakePaused || busy || rec) { speaking = false; got = []; pre = []; return; }
+        for (i = 0; i < d.length; i++) sum += d[i] * d[i];
+        var rms = Math.sqrt(sum / d.length), thr = Math.max(0.02, floor * 4);
+        if (!speaking) floor = floor * 0.97 + Math.min(rms, 0.03) * 0.03;
+        var copy = new Float32Array(d);
+        if (!speaking) {
+          pre.push(copy); if (pre.length > 4) pre.shift();
+          if (rms > thr) { speaking = true; t0 = now; got = pre.slice(); pre = []; quietSince = 0; voiced = 1; frames = 1; }
+          return;
+        }
+        got.push(copy); frames++; if (rms > thr) { voiced++; quietSince = 0; } else if (!quietSince) quietSince = now;
+        var len = now - t0;
+        if (len > 3600) { speaking = false; got = []; return; }                 // a long sentence is not a wake word: drop it, send nothing
+        if (quietSince && now - quietSince > 500) {
+          var chunks = got; speaking = false; got = [];
+          if (len < 350 || voiced / frames < 0.3) return;                      // a click or a cough
+          send(chunks);
+        }
+      };
+      function send(chunks) {
+        var t = Date.now(); wakeCalls = wakeCalls.filter(function (x) { return t - x < 60000; });
+        if (wakeCalls.length >= 10) return;                                    // protects your key and your internet
+        if (navigator.onLine === false) return;
+        wakeCalls.push(t); busy = true;
+        var total = 0; chunks.forEach(function (c) { total += c.length; });
+        var flat = new Float32Array(total), o = 0; chunks.forEach(function (c) { flat.set(c, o); o += c.length; });
+        var ratio = rate / 16000, outLen = Math.floor(flat.length / ratio), out = new Float32Array(outLen);
+        for (var i = 0; i < outLen; i++) out[i] = flat[Math.floor(i * ratio)];
+        P.stt(wavBytes([out], 16000), 'en-GB').then(function (res) {
+          busy = false;
+          if (res && res.ok && res.text) {
+            var m = WAKE_RE.exec(res.text);
+            if (m && m.index < 14) emit('wakeHeard', { rest: res.text.slice(m.index + m[0].length).replace(/^[\s,.:;!?-]+|[\s]+$/g, '') });
+          } else if (res && res.code === 'nokey') { emit('wakeError', { msg: res.error }); wakeStop(); }
+        }, function () { busy = false; });
+      }
+      src.connect(node); node.connect(ctx.destination);
+    }, function () { wk = null; emit('wakeError', { msg: 'I could not open the microphone for the wake word.' }); });
+  }
+
   /* ---------------------------------------------------------------- the bridge */
   function J(o) { return JSON.stringify(o); }
   var B = {
@@ -150,6 +212,8 @@
     stopSpeaking: function () { speakGen++; try { synth.cancel(); } catch (e) { /* */ } },
     listen: function (lang) { listen(lang); },
     stopListening: function () { stopRec(); },
+    wakeSet: function (on) { if (on) wakeStart(); else wakeStop(); },
+    wakePause: function (p) { wakePaused = !!p; },
     relisten: function (ms) { setTimeout(function () { emit('ballKick'); }, Math.max(0, ms | 0)); },
     voices: function () {
       var vs = voiceList(), langs = { 'en-GB': false, 'bn-BD': false, 'bn-IN': false, 'hi-IN': false };
