@@ -83,7 +83,7 @@
   }
   Array.prototype.forEach.call(document.querySelectorAll('.mod'), function (b) { b.addEventListener('click', function () { run(b.dataset.id, b); }); });
   J.on(function (ev, d) {
-    if (ev === 'init') { wrap.className = 'wrap side-' + d.side + (d.expanded ? '' : ' collapsed'); if (d.expanded) setExpanded(true); setFocus(focusEnd); }
+    if (ev === 'init') { wrap.className = 'wrap side-' + d.side + ' v-' + (d.vside || 'top') + (d.expanded ? '' : ' collapsed'); if (d.expanded) setExpanded(true); setFocus(focusEnd); }
     else if (ev === 'stats') stats(d);
     else if (ev === 'reply') { reply.textContent = d.text; reply.scrollTop = 0; if (wrap.classList.contains('collapsed')) say(''); }
     else if (ev === 'state') setState(d.state);

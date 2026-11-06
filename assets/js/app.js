@@ -81,7 +81,7 @@
   /* ------------------------------------------------------------------ settings */
   var DEFAULTS = {
     name: 'sir', active: 'gemini', providers: {}, fallback: true,
-    speak: true, handsFree: false, wake: false, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
+    speak: true, handsFree: false, wake: false, pcHud: true, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
     systemPrompt: '', style: 'jarvis', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
     services: { tvKey: '', gsKey: '', gsCx: '', owKey: '', city: '', units: 'metric' }
   };
@@ -108,6 +108,7 @@
     try { if (window.Orb && Orb.setTheme) Orb.setTheme(THEME_RGB[n]); } catch (e) { /* ignore */ }
     try { if (B && B.setWidgetTheme) B.setWidgetTheme(n); } catch (e) { /* ignore */ }
     try { if (B && B.ballTheme) B.ballTheme(n); } catch (e) { /* ignore */ }      // the PC floating ball wears the same colours
+    HUD.rgb = '';
   }
   function applyOrbStyle(n) { try { if (window.Orb && Orb.setStyle) Orb.setStyle(n === 'minimal' || n === 'dense' ? n : 'classic'); } catch (e) { /* ignore */ } }
   var saveTimer = 0;
@@ -265,7 +266,7 @@
     state = s;
     try { B && B.ballState && B.ballState(s); } catch (e) { /* */ }
     Orb.setState(s);
-    if (PC) { perfGov(); try { B && B.wakePause && B.wakePause(s !== 'idle'); } catch (e) { /* */ } }
+    if (PC) { hudState(s); perfGov(); try { B && B.wakePause && B.wakePause(s !== 'idle'); } catch (e) { /* */ } }
     statusEl.textContent = STATUS[s];
     statusEl.className = 'status' + (s === 'thinking' ? ' think' : '');
     micEl.className = 'mic' + (s === 'idle' ? '' : ' ' + s);
@@ -856,7 +857,8 @@
     step('Your ' + OTHER + ' answers', function (set, next) { pcPing(function (r) { if (r.ok) set('ok', 'Answered.'); else { set('bad', r.msg); stopped = true; } next(); }); });
     step('Clocks agree', function (set, next) {
       var t0 = Date.now();
-      linkSend('pcinfo', 'time', '', function (r) {
+      linkSend(PC ? 'clock' : 'pcinfo', PC ? '' : 'time', '', function (r) {
+        if (PC && !r.ok && /cannot do|do not know|unknown/i.test(r.msg || '')) { set('ok', 'Your phone is on an older version, so the clocks were not compared. Update the phone app.'); next(); return; }
         var m = String(r.raw || r.msg).match(/epoch (\d{10,})/);
         if (!r.ok || !m) { set('warn', r.ok ? 'Could not read the other clock.' : r.msg); next(); return; }
         var diff = Math.round((+m[1] - (t0 + Date.now()) / 2) / 1000), a = Math.abs(diff);
@@ -2033,6 +2035,83 @@
     dashP.refreshCal = loadCal;
   }
 
+  /* ------------------------------------------------------------------ PC side panels: live graphs, a scan and task progress in the free space (PC only, cheap on purpose:
+     one 1.5 s timer, tiny canvases, the radar and progress bars are pure CSS, and nothing runs while the window is hidden or in the background) */
+  var HUD = { on: false, timer: 0, cpu: [], ram: [], rgb: '', els: {}, tasks: [], scanAt: 0, scanStep: 0 };
+  function hudRgb() { if (!HUD.rgb) HUD.rgb = (getComputedStyle(document.documentElement).getPropertyValue('--cyrgb') || '0,229,255').trim(); return HUD.rgb; }
+  function hudSpark(cv, data, max, fill) {
+    var c = cv.getContext('2d'), w = cv.width, h = cv.height, rgb = hudRgb(), n = data.length, i, x, y;
+    c.clearRect(0, 0, w, h);
+    c.strokeStyle = 'rgba(' + rgb + ',.14)'; c.lineWidth = 1; c.beginPath();
+    for (i = 1; i < 4; i++) { y = Math.round(h * i / 4) + .5; c.moveTo(0, y); c.lineTo(w, y); } c.stroke();
+    if (n < 2) return;
+    c.beginPath();
+    for (i = 0; i < n; i++) { x = w * i / 59; y = h - 2 - (h - 4) * Math.min(1, data[i] / max); if (i === 0) c.moveTo(x, y); else c.lineTo(x, y); }
+    c.strokeStyle = 'rgba(' + rgb + ',.95)'; c.lineWidth = 1.6; c.stroke();
+    if (fill) { c.lineTo(w * (n - 1) / 59, h); c.lineTo(0, h); c.closePath(); var g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, 'rgba(' + rgb + ',.32)'); g.addColorStop(1, 'rgba(' + rgb + ',0)'); c.fillStyle = g; c.fill(); }
+  }
+  function hudPanel(parent, key, title, inner) {
+    var d = el('div', 'hp hp-' + key); d.innerHTML = '<div class="hp-t"><span>' + title + '</span><b data-v></b></div>' + inner; parent.appendChild(d); HUD.els[key] = d; return d;
+  }
+  function hudBuild() {
+    var st = document.getElementById('stage'); if (!st || HUD.built) return; HUD.built = true;
+    var L = el('div', 'pchud l'), R = el('div', 'pchud r'); L.setAttribute('aria-hidden', 'true'); R.setAttribute('aria-hidden', 'true');
+    hudPanel(L, 'cpu', 'PROCESSOR', '<canvas width="220" height="34"></canvas><div class="hp-cores"></div>');
+    hudPanel(L, 'ram', 'MEMORY', '<canvas width="220" height="34"></canvas><div class="hp-f" data-f></div>');
+    hudPanel(L, 'sto', 'STORAGE', '<div class="hp-bar"><i data-bar></i></div><div class="hp-f" data-f></div>');
+    hudPanel(R, 'scan', 'SYSTEM SCAN', '<div class="hp-sc"><div class="radar"><i class="sweep"></i><i class="blip b1"></i><i class="blip b2"></i><i class="blip b3"></i></div><ul class="hp-chk"></ul></div><div class="hp-bar"><i data-bar></i></div><div class="hp-f" data-f>INITIALISING</div>');
+    hudPanel(R, 'net', 'NETWORK & LINK', '<canvas width="220" height="34"></canvas><div class="hp-f" data-f></div>');
+    hudPanel(R, 'task', 'WORKING ON', '<ul class="hp-tasks"></ul>');
+    st.appendChild(L); st.appendChild(R);
+    var cores = L.querySelector('.hp-cores'); for (var i = 0; i < 16; i++) cores.appendChild(el('i'));
+    var chk = R.querySelector('.hp-chk'); ['CORE', 'MEMORY', 'STORAGE', 'LINK', 'ENCRYPTION'].forEach(function (n) { var li = el('li'); li.innerHTML = '<s></s>' + n; chk.appendChild(li); });
+  }
+  function hudTick() {
+    if (!HUD.on || document.hidden || !document.hasFocus()) return;
+    var d = sysGet(), q = function (k, s) { return HUD.els[k].querySelector(s); };
+    var cpu = typeof d.cpuPct === 'number' ? d.cpuPct : 0, ram = d.ramPct || 0;
+    HUD.cpu.push(cpu); if (HUD.cpu.length > 60) HUD.cpu.shift(); HUD.ram.push(ram); if (HUD.ram.length > 60) HUD.ram.shift();
+    q('cpu', '[data-v]').textContent = Math.round(cpu) + '%'; hudSpark(q('cpu', 'canvas'), HUD.cpu, 100, true);
+    var cores = q('cpu', '.hp-cores').children, per = d.cores || [];
+    for (var i = 0; i < cores.length; i++) { var v = per[i]; cores[i].style.display = v === undefined ? 'none' : ''; if (v !== undefined) cores[i].style.height = Math.max(8, Math.min(100, v)) + '%'; }
+    q('ram', '[data-v]').textContent = Math.round(ram) + '%'; hudSpark(q('ram', 'canvas'), HUD.ram, 100, true);
+    q('ram', '[data-f]').textContent = d.ramUsedMB !== undefined ? (Math.round(d.ramUsedMB / 102.4) / 10) + ' / ' + (Math.round(d.ramTotalMB / 102.4) / 10) + ' GB IN USE' : '';
+    q('sto', '[data-v]').textContent = d.stoPct !== undefined ? d.stoPct + '%' : '--'; q('sto', '[data-bar]').style.width = (d.stoPct || 0) + '%';
+    q('sto', '[data-f]').textContent = d.stoFreeGB !== undefined ? d.stoFreeGB + ' GB FREE OF ' + d.stoTotalGB + ' GB' : '';
+    // scan: walks through five checks, then holds "all nominal" for a moment
+    var chk = HUD.els.scan.querySelectorAll('.hp-chk li'), ld = linkDiag(), ls = linkState(), now = Date.now();
+    var okv = [true, ram < 92, (d.stoPct || 0) < 95, ls.paired ? ld.connected !== false : true, true];
+    HUD.scanStep = Math.floor(((now - HUD.scanAt) / 1000) / 2.4);
+    var cycle = chk.length + 3;
+    if (HUD.scanStep >= cycle) { HUD.scanAt = now; HUD.scanStep = 0; }
+    var s = HUD.scanStep; for (var k = 0; k < chk.length; k++) { chk[k].className = k < s ? (okv[k] ? 'ok' : 'warn') : k === s ? 'run' : ''; }
+    var all = okv.every(Boolean), bar = HUD.els.scan.querySelector('[data-bar]');
+    bar.style.width = Math.min(100, Math.round(Math.min(s, chk.length) * 100 / chk.length)) + '%';
+    HUD.els.scan.querySelector('[data-f]').textContent = s < chk.length ? 'SCANNING ' + chk[Math.min(s, chk.length - 1)].textContent : (all ? 'ALL SYSTEMS NOMINAL' : 'ATTENTION NEEDED');
+    HUD.els.scan.querySelector('[data-v]').textContent = s < chk.length ? Math.round(s * 100 / chk.length) + '%' : '100%';
+    // network
+    var cn = navigator.connection || {}, rtt = cn.rtt, dl = cn.downlink; HUD.net = HUD.net || []; HUD.net.push(navigator.onLine === false ? 0 : (typeof rtt === 'number' ? rtt : 0)); if (HUD.net.length > 60) HUD.net.shift();
+    q('net', '[data-v]').textContent = navigator.onLine === false ? 'OFFLINE' : (typeof rtt === 'number' ? rtt + ' ms' : 'ONLINE'); hudSpark(q('net', 'canvas'), HUD.net, Math.max(200, Math.max.apply(null, HUD.net)), false);
+    q('net', '[data-f]').textContent = (ls.paired ? 'PHONE ' + (ld.connected === false ? 'OFFLINE' : 'LINKED') : 'PHONE NOT LINKED') + (typeof dl === 'number' ? ' · ' + dl + ' MBPS' : '');
+  }
+  function hudTasks() {
+    var ul = HUD.els.task && HUD.els.task.querySelector('.hp-tasks'); if (!ul) return;
+    ul.innerHTML = ''; var list = HUD.tasks.slice(-4);
+    if (!list.length) { var e0 = el('li', 'idle'); e0.textContent = 'STANDING BY'; ul.appendChild(e0); return; }
+    list.forEach(function (t) { var li = el('li', t.st); var s = el('span'); s.textContent = t.t.length > 30 ? t.t.slice(0, 29) + '…' : t.t; li.appendChild(s); li.appendChild(el('i')); ul.appendChild(li); });
+    HUD.els.task.querySelector('[data-v]').textContent = HUD.tasks.some(function (t) { return t.st === 'run'; }) ? 'BUSY' : 'IDLE';
+  }
+  function hudTask(text) { if (!HUD.on) return; HUD.tasks.push({ t: String(text), st: 'run' }); if (HUD.tasks.length > 8) HUD.tasks.shift(); hudTasks(); }
+  function hudState(s) {
+    if (!HUD.on) return;
+    if (s === 'idle') { var ch = false; HUD.tasks.forEach(function (t) { if (t.st === 'run') { t.st = 'done'; ch = true; } }); if (ch) hudTasks(); }
+  }
+  function hudSet(on) {
+    on = !!on && PC; HUD.on = on; document.documentElement.classList.toggle('pc-hud', on);
+    if (on) { hudBuild(); HUD.scanAt = Date.now(); hudTasks(); hudTick(); if (!HUD.timer) HUD.timer = setInterval(hudTick, 1500); }
+    else if (HUD.timer) { clearInterval(HUD.timer); HUD.timer = 0; }
+  }
+
   function openMonitor() {
     if (!monP) monP = makePanel('mon', 'SYSTEM MONITOR');
     function render() {
@@ -2069,7 +2148,7 @@
 
   /* ------------------------------------------------------------------ character: personality, emotions, reply style */
   var STYLES = [
-    ['jarvis', 'Movie Jarvis — Tony Stark\u2019s AI (default)'],
+    ['jarvis', 'Jarvis Default'],
     ['friend', 'Warm friend — relaxed, caring, encouraging'],
     ['sharp', 'Sharp & brief — fewest words, no small talk'],
     ['playful', 'Playful — cheeky banter, still accurate']
@@ -2230,6 +2309,7 @@
   }
 
   function handleUser(text, fromVoice) {
+    if (PC) hudTask(text);
     text = (text || '').trim();
     if (!text) return;
     lastFromVoice = !!fromVoice;
@@ -2727,6 +2807,16 @@
       function grp(title, sub) { var g = el('div', 'dl-grp', title); box.appendChild(g); if (sub) box.appendChild(el('div', 'dl-sub', sub)); }
       function grid(cols) { var g = el('div', 'dl-grid' + (cols === 2 ? ' two' : '')); box.appendChild(g); return g; }
       function gb(g, txt, cls, fn) { var b = btn(txt, cls, fn); g.appendChild(b); return b; }
+      function dlResult(g, title, msg, ok) {
+        var old = g.parentNode.querySelector('.dl-res[data-for="' + title + '"]'); if (old) old.remove();
+        var box = el('div', 'dl-res' + (ok ? '' : ' bad')); box.dataset['for'] = title;
+        var h = el('div', 'dl-res-h'); h.appendChild(el('span', '', title)); var x = el('button', 'dl-x', '×'); x.setAttribute('aria-label', 'Close'); x.addEventListener('click', function () { box.remove(); }); h.appendChild(x); box.appendChild(h);
+        var items = msg.replace(/^[^:]{0,40}:\s*/, function (m0) { return /apps?|startup|running|top/i.test(m0) ? '' : m0; }).split(/\n|,\s+(?=[A-Za-z0-9])/).map(function (s) { return s.trim().replace(/[.]$/, ''); }).filter(Boolean);
+        if (items.length > 2) { var ul = el('ul', 'dl-list'); items.slice(0, 40).forEach(function (s) { var li = el('li'); li.textContent = s.length > 70 ? s.slice(0, 68) + '…' : s; li.title = s; ul.appendChild(li); }); box.appendChild(ul); }
+        else box.appendChild(el('div', 'dl-res-t', msg));
+        g.parentNode.insertBefore(box, g.nextSibling);
+        try { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* */ }
+      }
       function send(g, label, type, arg, opt) {
         opt = opt || {};
         var armedT = 0;
@@ -2737,7 +2827,11 @@
             armedT = setTimeout(function () { delete b.dataset.armed; b.textContent = b.dataset.label; if (opt.cls !== 'danger') b.classList.remove('danger'); }, 4000); return;
           }
           if (b.dataset.armed) { clearTimeout(armedT); delete b.dataset.armed; b.textContent = b.dataset.label; if (opt.cls !== 'danger') b.classList.remove('danger'); }
-          linkSend(type, arg, '', function (d) { toast(d.msg || (d.ok ? 'Done' : 'Failed'), opt.long ? 9000 : 3200); });
+          linkSend(type, arg, '', function (d) {
+            var msg = String(d.msg || (d.ok ? 'Done' : 'Failed'));
+            if (msg.length > 110 || opt.long) { dlResult(g, label, msg, d.ok); return; }   // long answers get a readable box instead of a toast
+            toast(msg, 3200);
+          });
         });
       }
       grp('CONNECTION');
@@ -2871,6 +2965,7 @@
       tw.appendChild(b);
     });
     var twc = el('div', 'card'); twc.style.padding = '12px'; twc.appendChild(tw); sa.appendChild(twc);
+    if (PC) sa.appendChild(toggleRow('Side panels', 'Live graphs, a system scan and task progress beside Jarvis. Light on the PC and paused when the window is in the background.', function () { return S.pcHud !== false; }, function (v) { S.pcHud = v; hudSet(v); }));
     if (PC) sa.appendChild(toggleRow('Floating ball', 'The always-on-top Jarvis orb (Ctrl+Alt+J shows or hides it; right-click the ball or the tray icon for the same switch)', function () { try { var q = B.permissions(); if (typeof q === 'string') q = JSON.parse(q); return !!q.ball; } catch (e) { return false; } }, function (v) { B.setBall(v); toast(v ? 'Floating ball on' : 'Floating ball off'); }));
     var ot = el('div', 'themes');
     [['classic', 'Classic reactor'], ['minimal', 'Minimal rings'], ['dense', 'Dense tech']].forEach(function (o2) {
@@ -3155,7 +3250,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.29.1' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.30.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3302,6 +3397,7 @@
     runBoot();
   }
 
+  if (PC) setTimeout(function () { hudSet(S.pcHud !== false); }, 1200);
   if (PC && S.wake) setTimeout(function () { try { B.wakeSet(true); } catch (e) { /* */ } }, 3500);
   window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

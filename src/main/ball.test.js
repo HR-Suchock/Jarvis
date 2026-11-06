@@ -47,3 +47,15 @@ test('parseTasklist groups programs and sorts by memory', () => {
 test('no common media/volume buttons are runnable from the ball', () => {
   assert.deepStrictEqual(Object.keys(b.TILE_ACTIONS), ['dl']);
 });
+
+test('freePosition lets the ball rest anywhere and keeps it visible', () => {
+  const b = require('./ball.js'); const wa = { x: 0, y: 0, width: 1366, height: 768 };
+  const m = b.freePosition(600, 300, wa); assert.strictEqual(m.x, 600); assert.strictEqual(m.y, 300);
+  const o = b.freePosition(-50, 9999, wa); assert.ok(o.x >= 0 && o.y + b.SIZE <= wa.height);
+  assert.strictEqual(b.freePosition(100, 100, wa).side, 'left'); assert.strictEqual(b.freePosition(1200, 100, wa).side, 'right');
+});
+test('expandBounds opens upwards when there is no room below, and the ball keeps its spot', () => {
+  const b = require('./ball.js'); const wa = { x: 0, y: 0, width: 1366, height: 768 };
+  const low = b.expandBounds(300, 650, wa); assert.strictEqual(low.vside, 'bottom'); assert.strictEqual(low.y + low.height, 650 + b.SIZE);
+  const high = b.expandBounds(300, 40, wa); assert.strictEqual(high.vside, 'top'); assert.strictEqual(high.y, 40);
+});

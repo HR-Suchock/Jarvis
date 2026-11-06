@@ -269,8 +269,15 @@ function saveBounds() {
 
 function createWindow(hidden) {
   const sb = loadBounds();
-  const wa = screen.getPrimaryDisplay().workArea;
+  let wa = screen.getPrimaryDisplay().workArea;
+  if (sb && typeof sb.x === 'number' && typeof sb.y === 'number') { try { wa = screen.getDisplayMatching({ x: sb.x, y: sb.y, width: sb.width || 800, height: sb.height || 600 }).workArea; } catch (e) { /* primary */ } }
   const def = { width: Math.min(1180, wa.width - 60), height: Math.min(780, wa.height - 60) };
+  if (sb) {                                                   // a saved window must fit on a screen that exists now (the taskbar or a missing monitor must not hide part of it)
+    if (sb.width) sb.width = Math.max(420, Math.min(sb.width, wa.width));
+    if (sb.height) sb.height = Math.max(580, Math.min(sb.height, wa.height));
+    if (typeof sb.x === 'number') sb.x = Math.max(wa.x, Math.min(sb.x, wa.x + wa.width - (sb.width || 800)));
+    if (typeof sb.y === 'number') sb.y = Math.max(wa.y, Math.min(sb.y, wa.y + wa.height - (sb.height || 600)));
+  }
   win = new BrowserWindow({
     width: (sb && sb.width) || def.width, height: (sb && sb.height) || def.height,
     x: sb && typeof sb.x === 'number' ? sb.x : undefined, y: sb && typeof sb.y === 'number' ? sb.y : undefined,
@@ -332,9 +339,22 @@ function wireIpc() {
   ipcMain.on('ball:theme', (e, n) => { if (trusted(e) && ball && typeof n === 'string') ball.setTheme(n); });
   ipcMain.on('ball:text', (e, t) => { if (trusted(e) && ball && typeof t === 'string') ball.reply(t); });
   ipcMain.on('ball:state', (e, st) => { if (trusted(e) && ball && typeof st === 'string') ball.state(st); });
+  let prevCores = null;                                            // CPU load since the previous call, for the side-panel graphs
+  function cpuLoad() {
+    const cs = os.cpus(); if (!cs || !cs.length) return { cpuPct: 0, cores: [] };
+    const now = cs.map((c) => { const t = c.times; return { idle: t.idle, total: t.user + t.nice + t.sys + t.idle + t.irq }; });
+    let out = { cpuPct: 0, cores: [] };
+    if (prevCores && prevCores.length === now.length) {
+      let ti = 0, tt = 0;
+      out.cores = now.map((n, i) => { const di = n.idle - prevCores[i].idle, dt = n.total - prevCores[i].total; ti += di; tt += dt; return dt > 0 ? Math.round(100 - di * 100 / dt) : 0; }).slice(0, 16);
+      out.cpuPct = tt > 0 ? Math.round(100 - ti * 100 / tt) : 0;
+    }
+    prevCores = now; return out;
+  }
   on('sysinfo', (e) => {
     const total = os.totalmem(), free = os.freemem();
     const o = { ramPct: Math.round(100 - free * 100 / total), ramUsedMB: Math.round((total - free) / 1048576), ramTotalMB: Math.round(total / 1048576), uptimeMin: Math.floor(os.uptime() / 60) };
+    Object.assign(o, cpuLoad());
     if (disk && disk.total > 0) { o.stoPct = Math.round(100 - disk.free * 100 / disk.total); o.stoFreeGB = Math.round(disk.free / 1.0737418e8) / 10; o.stoTotalGB = Math.round(disk.total / 1.0737418e8) / 10; }
     e.returnValue = JSON.stringify(o);
   });

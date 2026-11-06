@@ -15,12 +15,21 @@ function snapPosition(x, y, wa, size) {
   const left = (x + size / 2) < (wa.x + wa.width / 2);
   return { x: left ? wa.x + MARGIN : wa.x + wa.width - size - MARGIN, y: clamp(Math.round(y), wa.y + MARGIN, wa.y + wa.height - size - MARGIN), side: left ? 'left' : 'right' };
 }
-/** Window bounds of the opened panel for a ball at (x,y); the ball stays at its corner, the panel grows towards the screen centre. */
+/** Free placement: the ball can rest anywhere on the screen; it is only kept fully visible. */
+function freePosition(x, y, wa, size) {
+  size = size || SIZE;
+  const px = clamp(Math.round(x), wa.x + MARGIN, wa.x + wa.width - size - MARGIN);
+  const py = clamp(Math.round(y), wa.y + MARGIN, wa.y + wa.height - size - MARGIN);
+  return { x: px, y: py, side: (px + size / 2) < (wa.x + wa.width / 2) ? 'left' : 'right' };
+}
+/** Window bounds of the opened panel for a ball at (x,y). The ball keeps its exact spot: the panel grows towards the screen centre, sideways and up or down. */
 function expandBounds(x, y, wa, w, h) {
   w = Math.min(w || PANEL_W, wa.width - 2 * MARGIN); h = Math.min(h || PANEL_H, wa.height - 2 * MARGIN);
   const side = (x + SIZE / 2) < (wa.x + wa.width / 2) ? 'left' : 'right';
   const bx = side === 'left' ? x : x + SIZE - w;
-  return { x: clamp(bx, wa.x + MARGIN, wa.x + wa.width - w - MARGIN), y: clamp(y, wa.y + MARGIN, wa.y + wa.height - h - MARGIN), width: w, height: h, side };
+  const down = y + h <= wa.y + wa.height - MARGIN;                       // enough room below: the panel opens downwards
+  const by = down ? y : y + SIZE - h;                                    // otherwise it opens upwards and the ball stays at the bottom
+  return { x: clamp(bx, wa.x + MARGIN, wa.x + wa.width - w - MARGIN), y: clamp(by, wa.y + MARGIN, wa.y + wa.height - h - MARGIN), width: w, height: h, side, vside: down ? 'top' : 'bottom' };
 }
 function level(cpu, ram, disk) { return (ram >= 92 || cpu >= 95 || disk >= 97) ? 'bad' : (ram >= 80 || cpu >= 85 || disk >= 92) ? 'warn' : 'ok'; }
 /** What a dropped / copied string is: a web link (opens on the phone) or plain text (shown as a phone notification). */
@@ -88,7 +97,7 @@ const fmtMem = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 // ---------------------------------------------------------------- controller
 function createBall(ctx) {
   const { BrowserWindow, screen, ipcMain } = ctx.electron;
-  let w = null, expanded = false, pos = null, side = 'right', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null, ringing = false, ringTimer = null, themeName = 'cyan';
+  let w = null, expanded = false, pos = null, side = 'right', vside = 'top', drag = null, statTimer = null, prevCpu = null, hot = 0, lastRamNote = 0, lastDiskNote = 0, enabled = false, focusEnd = 0, focusTimer = null, ringing = false, ringTimer = null, themeName = 'cyan';
   const hist = { cpu: [], ram: [] };
   const wa = () => screen.getDisplayNearestPoint({ x: (pos ? pos.x : 0) + SIZE / 2, y: (pos ? pos.y : 0) + SIZE / 2 }).workArea;
   const alive = () => w && !w.isDestroyed();
@@ -134,15 +143,15 @@ function createBall(ctx) {
     if (!alive()) return;
     const area = wa();
     if (expanded) {
-      const b = expandBounds(pos.x, pos.y, area); side = b.side;
+      const b = expandBounds(pos.x, pos.y, area); side = b.side; vside = b.vside;
       w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }, false);
       reshape();                                     // grow first, then open the click area
     } else {
-      const s = snapPosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side;
+      const s = freePosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side; vside = expandBounds(pos.x, pos.y, area).vside;
       reshape();                                     // shrink the click area to the circle first, so no square ever flashes
       w.setBounds({ x: pos.x, y: pos.y, width: SIZE, height: SIZE }, false);
     }
-    send('init', { side, expanded });
+    send('init', { side, vside, expanded });
   }
   // the window is only as big as the orb and its clickable area is an exact circle (no invisible square around it)
   function reshape() {
@@ -163,7 +172,7 @@ function createBall(ctx) {
     if (alive()) return;
     const area = screen.getPrimaryDisplay().workArea;
     pos = loadPos() || { x: area.x + area.width - SIZE - MARGIN, y: area.y + Math.round(area.height * 0.55) };
-    const s = snapPosition(pos.x, pos.y, area); pos = { x: s.x, y: s.y }; side = s.side; expanded = false;
+    const s = freePosition(pos.x, pos.y, area); pos = { x: s.x, y: s.y }; side = s.side; vside = expandBounds(pos.x, pos.y, area).vside; expanded = false;
     w = new BrowserWindow({
       width: SIZE, height: SIZE, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
       skipTaskbar: true, alwaysOnTop: true, hasShadow: false, thickFrame: false, roundedCorners: false, show: false, focusable: true, title: 'Jarvis ball', backgroundColor: '#00000000',
@@ -173,7 +182,7 @@ function createBall(ctx) {
     w.setMenuBarVisibility(false);
     w.webContents.on('will-navigate', (e) => e.preventDefault());
     w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    w.webContents.once('did-finish-load', () => { send('init', { side, expanded }); send('focus', { end: focusEnd }); send('theme', { name: themeName }); if (w.isVisible()) startStats(); });
+    w.webContents.once('did-finish-load', () => { send('init', { side, vside, expanded }); send('focus', { end: focusEnd }); send('theme', { name: themeName }); if (w.isVisible()) startStats(); });
     w.webContents.on('render-process-gone', () => { const was = enabled; destroy(); if (was && enabled) setTimeout(() => { try { create(); } catch (e) { /* ignore */ } }, 800); });
     w.once('ready-to-show', () => { if (enabled) { w.showInactive(); startStats(); } });
     w.on('closed', () => { stopStats(); w = null; expanded = false; });
@@ -190,7 +199,7 @@ function createBall(ctx) {
     drag = null; if (!moved) return;
     const b = w.getBounds();
     // when the panel is open the ball sits at its top corner
-    pos = { x: expanded ? (side === 'left' ? b.x : b.x + b.width - SIZE) : b.x, y: b.y };
+    pos = { x: expanded ? (side === 'left' ? b.x : b.x + b.width - SIZE) : b.x, y: expanded && vside === 'bottom' ? b.y + b.height - SIZE : b.y };
     applyBounds(); savePos();
   });
   onB('ball:toggle', (open) => setExpanded(!!open));
@@ -252,4 +261,4 @@ function createBall(ctx) {
   };
 }
 
-module.exports = { circleRects, createBall, snapPosition, expandBounds, classifyDrop, level, insight, chips, parseTasklist, slope, TILE_ACTIONS, SIZE, PANEL_W, PANEL_H };
+module.exports = { circleRects, createBall, snapPosition, freePosition, expandBounds, classifyDrop, level, insight, chips, parseTasklist, slope, TILE_ACTIONS, SIZE, PANEL_W, PANEL_H };
