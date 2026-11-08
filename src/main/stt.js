@@ -21,12 +21,15 @@ async function whisper(url, key, model, wav, lang) {
   fd.append('temperature', '0');
   if (lang) fd.append('language', lang);
   let res;
-  try { res = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd, signal: AbortSignal.timeout(30000) }); }
+  try { res = await fetchRetry(url, { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd, signal: AbortSignal.timeout(30000) }); }
   catch (e) { throw netError(e); }
   const text = await res.text();
   if (!res.ok) { const e = new Error('HTTP ' + res.status + ': ' + text.slice(0, 200)); e.status = res.status; throw e; }
   return String(JSON.parse(text).text || '').trim();
 }
+
+/* Browser network stack first (follows Windows proxy/VPN, accepted by firewalls), plain Node as the fallback. */
+async function fetchRetry(url, init) { return require('./llm').doFetch(url, init); }
 
 async function geminiStt(key, model, wav, lang) {
   const body = {
@@ -37,7 +40,7 @@ async function geminiStt(key, model, wav, lang) {
   };
   let res;
   try {
-    res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model.replace(/^models\//, '') + ':generateContent',
+    res = await fetchRetry('https://generativelanguage.googleapis.com/v1beta/models/' + model.replace(/^models\//, '') + ':generateContent',
       { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
   } catch (e) { throw netError(e); }
   const text = await res.text();

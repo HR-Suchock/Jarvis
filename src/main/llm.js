@@ -15,6 +15,11 @@ function friendly(code, body) {
     else if (typeof e === 'string') detail = e;
     if (!detail) detail = o.message || '';
   } catch (e) { /* not json */ }
+  if (/^\s*<(?:!doctype|html)/i.test(String(body || ''))) {
+    detail = (code === 403 || code === 401 || code === 407)
+      ? 'a firewall, VPN, antivirus or network filter on this PC is blocking the request (the service itself did not answer). Try another network, switch the VPN off, or allow Jarvis in the firewall.'
+      : 'the connection was answered by a web page instead of the service (check VPN, proxy or captive Wi-Fi login).';
+  }
   if (!detail && body) detail = String(body).slice(0, 160);
   let head;
   if (code === 401) head = 'API key rejected (HTTP 401)';
@@ -26,14 +31,34 @@ function friendly(code, body) {
   return detail ? head + ': ' + detail : head;
 }
 
+
+/* The app's own browser network stack (Chromium) is used first: it follows the Windows proxy/VPN settings and looks like a normal browser to
+   firewalls and CDNs. Plain Node fetch is the fallback (and what the unit tests use). */
+let electronNet = null;
+try { const el = require('electron'); if (el && el.net && typeof el.net.fetch === 'function') electronNet = el.net; } catch (e) { /* not inside Electron */ }
+async function doFetch(url, init, alt) {
+  if (electronNet && !alt) {
+    try { return await electronNet.fetch(url, init); } catch (e) { if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw e; /* fall through to Node */ }
+  }
+  return fetch(url, init);
+}
+
 async function http(method, url, headers, body, timeoutMs) {
   let res;
   try {
-    res = await fetch(url, {
+    const init = {
       method, signal: AbortSignal.timeout(timeoutMs),
       headers: Object.assign(body ? { 'Content-Type': 'application/json; charset=utf-8' } : {}, headers || {}),
       body: body ? JSON.stringify(body) : undefined,
-    });
+    };
+    res = await doFetch(url, init);
+    // Some networks/CDNs answer Node's plain client with an HTML "403 Forbidden"; try the other network stack once.
+    if (res.status === 403) {
+      const ct = String(res.headers.get('content-type') || '');
+      if (/html/i.test(ct)) {
+        try { const r2 = await doFetch(url, init, true); if (r2.status !== 403) res = r2; } catch (e2) { /* keep first answer */ }
+      }
+    }
   } catch (e) {
     throw netError(e);
   }
@@ -185,4 +210,4 @@ async function weather(key, place, units) {
   };
 }
 
-module.exports = { chat, listModels, googleSearch, tavily, weather, ApiError, netError };
+module.exports = { __http: http, doFetch,  chat, listModels, googleSearch, tavily, weather, ApiError, netError };
