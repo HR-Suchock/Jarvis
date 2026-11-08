@@ -10,12 +10,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package.json') }}
+          restore-keys: electron-${{ runner.os }}-
       - name: Install
         run: npm install
       - name: Test
         run: npm test
-      - name: Build installer exe
-        run: npm run dist
+      - name: Build installer exe (retries if the download server is busy)
+        shell: bash
+        run: |
+          for i in 1 2 3 4; do
+            npm run dist && exit 0
+            echo "Build failed (attempt $i), waiting before retry"
+            sleep 45
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: Jarvis-Windows
