@@ -361,6 +361,7 @@ function wireIpc() {
   ipcMain.on('battery', (e, b) => { if (trusted(e) && b && typeof b.pct === 'number') battery = { pct: Math.round(b.pct), charging: !!b.charging }; });
   on('openurl', (e, u) => { if (typeof u === 'string' && /^https?:\/\/\S+$/i.test(u)) shell.openExternal(u); e.returnValue = ''; });
   on('copy', (e, t) => { if (typeof t === 'string') clipboard.writeText(t.slice(0, 20000)); e.returnValue = ''; });
+  on('quitapp', (e) => { e.returnValue = ''; setTimeout(() => { quitting = true; shutDown(); app.quit(); }, 50); });
   on('minimize', (e) => { if (win) win.minimize(); e.returnValue = ''; });
   on('privacy', (e, v) => { try { if (win) win.setContentProtection(!!v); } catch (x) { /* ignore */ } e.returnValue = ''; });
   on('appinfo', (e) => { e.returnValue = JSON.stringify({ version: VERSION, sdk: 0, platform: process.platform }); });
@@ -458,7 +459,7 @@ function refreshTray() {
     { label: 'Floating ball', type: 'checkbox', checked: ballOn(), click: (i) => setBallOn(i.checked) },
     { label: 'Show / hide the ball (Ctrl+Alt+J)', enabled: ballOn(), click: () => { if (ball) ball.toggleVisible(); } },
     { type: 'separator' },
-    { label: 'Quit', click: () => { quitting = true; app.quit(); } },
+    { label: 'Quit Jarvis', click: () => { quitting = true; shutDown(); app.quit(); } },
   ]));
 }
 app.whenReady().then(() => {
@@ -519,5 +520,16 @@ app.whenReady().then(() => {
 });
 
 app.on('second-instance', showWin);
-app.on('before-quit', () => { quitting = true; try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ } if (store) store.flushSync(); if (relay) relay.stop(); if (actions) actions.dispose(); });
+function shutDown() {                                               // everything that could keep the process or a ghost tray icon alive
+  quitting = true;
+  try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ }
+  try { if (store) store.flushSync(); } catch (e) { /* ignore */ }
+  try { if (relay) relay.stop(); } catch (e) { /* ignore */ }
+  try { if (actions) actions.dispose(); } catch (e) { /* ignore */ }
+  try { if (ball) ball.destroy(); } catch (e) { /* ignore */ }
+  try { if (xWorker) { xWorker.terminate(); xWorker = null; } } catch (e) { /* ignore */ }
+  try { if (tray) { tray.destroy(); tray = null; } } catch (e) { /* ignore */ }   // a destroyed tray icon disappears at once instead of lingering until the mouse passes over it
+}
+app.on('before-quit', () => { shutDown(); setTimeout(() => { try { app.exit(0); } catch (e) { process.exit(0); } }, 2500).unref(); });   // if anything still hangs, leave anyway
+app.on('will-quit', () => { shutDown(); });
 app.on('window-all-closed', () => { if (quitting || !linkCfg().enabled) app.quit(); });

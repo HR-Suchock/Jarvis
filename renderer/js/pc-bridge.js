@@ -47,18 +47,34 @@
     if (cur.trim()) out.push(cur);
     return out;
   }
+  /* Speech out, a sentence at a time: a short breath between sentences and a tiny, repeatable change of pace and pitch, so it flows like a person. The voice itself is never changed. */
+  function sentenceParts(text) {
+    var raw = String(text || '').replace(/\s+/g, ' ').trim(), out = [], re = /[^.!?]+(?:[.!?]+["')\]]?|$)\s*/g, m;
+    while ((m = re.exec(raw)) !== null) {
+      var s = m[0].trim(); if (!s) continue;
+      while (s.length > 230) { var cut = Math.max(s.lastIndexOf(', ', 200), s.lastIndexOf('; ', 200)); if (cut < 60) cut = s.lastIndexOf(' ', 200); if (cut < 40) cut = 200; out.push({ t: s.slice(0, cut + 1).trim(), gap: 90 }); s = s.slice(cut + 1).trim(); }
+      if (s) out.push({ t: s, gap: /[?:]$/.test(s) ? 300 : 170 });
+    }
+    return out.length ? out : [{ t: raw, gap: 0 }];
+  }
+  function hashStr(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
   function speakNow(text, lang, rate, pitch, mode) {
     if (!synth) { emit('ttsDone'); return; }
     var gen = ++speakGen; synth.cancel();
-    var list = chunks(text), i = 0, started = false, v = pickVoice(lang, mode);
+    var list = sentenceParts(text), i = 0, started = false, v = pickVoice(lang, mode), br = rate || 1, bp = pitch || 1;
     (function next() {
       if (gen !== speakGen) return;
       if (i >= list.length) { emit('ttsDone'); return; }
-      var u = new SpeechSynthesisUtterance(list[i++]);
+      var part = list[i++], last = i >= list.length, h = hashStr(part.t);
+      var u = new SpeechSynthesisUtterance(part.t);
+      var r = br * (1 + ((h >> 3) % 5 - 2) * 0.01), p = bp * (1 + (h % 7 - 3) * 0.008);
+      if (/\?$/.test(part.t)) { p *= 1.05; r *= 0.98; } else if (/!$/.test(part.t)) { p *= 1.03; r *= 1.03; }
+      if (last) { r *= 0.97; p *= 0.98; }
       u.lang = lang || 'en-GB'; if (v) u.voice = v;
-      u.rate = Math.max(0.5, Math.min(2, rate || 1)); u.pitch = Math.max(0.5, Math.min(2, pitch || 1));
+      u.rate = Math.max(0.5, Math.min(2, r)); u.pitch = Math.max(0.5, Math.min(2, p));
       u.onstart = function () { if (!started) { started = true; emit('ttsStart'); } };
-      u.onend = next; u.onerror = function () { if (gen === speakGen) next(); };
+      var go = function () { if (gen !== speakGen) return; if (last) next(); else setTimeout(next, part.gap); };
+      u.onend = go; u.onerror = function () { if (gen === speakGen) go(); };
       synth.speak(u);
     })();
   }
@@ -133,27 +149,40 @@
      Nothing leaves the PC until a short, loud burst of speech (0.3-3.5 s) is heard. Only that burst is sent to the speech key you already added,
      at most 10 times a minute. If the text contains "Jarvis" Jarvis wakes up; otherwise the text is thrown away. */
   var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis)\b[\s,.:;!?-]*/i;
-  var wk = null, wakePaused = false, wakeCalls = [], wakeLang = 'en-GB';
+  var wk = null, wakePaused = false, wakeCalls = [], wakeLang = 'en-GB', wakeOn = false, clapOn = false;
   function wakeStop() {
     if (!wk) return; var r = wk; wk = null; r.dead = true;
     try { r.node.disconnect(); r.src.disconnect(); } catch (e) { /* */ }
     try { r.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* */ }
     try { r.ctx.close(); } catch (e) { /* */ }
   }
+  function wakeRefresh() { if (wakeOn || clapOn) wakeStart(); else wakeStop(); }
   function wakeStart() {
     if (wk) return; wk = { dead: false, starting: true };
     var AC = window.AudioContext || window.webkitAudioContext;
-    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+    navigator.mediaDevices.getUserMedia({ audio: clapOn ? { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false } : { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }) /* clap detection needs the raw sound: the noise filter would smooth a clap away */.then(function (stream) {
       if (!wk || wk.dead) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       var ctx = new AC(), src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(4096, 1, 1);
       var r = wk = { stream: stream, ctx: ctx, src: src, node: node, dead: false };
+      var clapPrev = 0, clapLast = 0, clapCool = 0, quietBetween = false;
       var rate = ctx.sampleRate, floor = 0.004, pre = [], got = [], speaking = false, t0 = 0, quietSince = 0, voiced = 0, frames = 0, busy = false;
       node.onaudioprocess = function (e) {
         if (r.dead) return;
         var d = e.inputBuffer.getChannelData(0), sum = 0, i, now = Date.now();
         if (wakePaused || busy || rec) { speaking = false; got = []; pre = []; return; }
-        for (i = 0; i < d.length; i++) sum += d[i] * d[i];
+        var pk = 0, v0;
+        for (i = 0; i < d.length; i++) { v0 = d[i]; sum += v0 * v0; if (v0 > pk) pk = v0; else if (-v0 > pk) pk = -v0; }
         var rms = Math.sqrt(sum / d.length), thr = Math.max(0.02, floor * 4);
+        if (clapOn) {                                   // two sharp, short sounds 0.2-0.9 s apart, with quiet in between; nothing is recorded or sent anywhere
+          var imp = pk >= Math.max(0.18, floor * 14) && pk / (rms || 1) >= 5;
+          if (imp && now - clapLast > 200 && now > clapCool) {
+            if (clapPrev && now - clapPrev <= 900 && quietBetween) { clapPrev = 0; clapCool = now + 3000; emit('clapHeard', {}); }
+            else { clapPrev = now; quietBetween = false; }
+            clapLast = now;
+          } else if (!imp && clapPrev && rms < Math.max(0.05, floor * 6) && now - clapLast > 90) quietBetween = true;
+          if (clapPrev && now - clapPrev > 900) clapPrev = 0;
+        }
+        if (!wakeOn) { floor = floor * 0.97 + Math.min(rms, 0.03) * 0.03; return; }
         if (!speaking) floor = floor * 0.97 + Math.min(rms, 0.03) * 0.03;
         var copy = new Float32Array(d);
         if (!speaking) {
@@ -212,7 +241,9 @@
     stopSpeaking: function () { speakGen++; try { synth.cancel(); } catch (e) { /* */ } },
     listen: function (lang) { listen(lang); },
     stopListening: function () { stopRec(); },
-    wakeSet: function (on) { if (on) wakeStart(); else wakeStop(); },
+    wakeSet: function (on) { wakeOn = !!on; wakeRefresh(); },
+    quitApp: function () { P.quitApp(); },
+    clapSet: function (on) { var was = clapOn; clapOn = !!on; if (was !== clapOn) wakeStop(); wakeRefresh(); },
     wakePause: function (p) { wakePaused = !!p; },
     relisten: function (ms) { setTimeout(function () { emit('ballKick'); }, Math.max(0, ms | 0)); },
     voices: function () {

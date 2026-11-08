@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   openUrl: (u) => sync('openurl', u),
   copy: (t) => sync('copy', t),
   minimize: () => sync('minimize'),
+  quitApp: () => sync('quitapp'),
   privacy: (v) => sync('privacy', !!v),
   chat: (p) => ipcRenderer.send('chat', p),
   models: (p) => ipcRenderer.send('models', p),

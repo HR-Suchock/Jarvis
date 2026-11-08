@@ -144,14 +144,15 @@ function createBall(ctx) {
     const area = wa();
     if (expanded) {
       const b = expandBounds(pos.x, pos.y, area); side = b.side; vside = b.vside;
+      send('init', { side, vside, expanded });       // the page switches first (its panel starts invisible), then the window grows: no half-drawn frame
       w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }, false);
-      reshape();                                     // grow first, then open the click area
+      reshape();
     } else {
       const s = freePosition(pos.x, pos.y, area); pos.x = s.x; pos.y = s.y; side = s.side; vside = expandBounds(pos.x, pos.y, area).vside;
       reshape();                                     // shrink the click area to the circle first, so no square ever flashes
       w.setBounds({ x: pos.x, y: pos.y, width: SIZE, height: SIZE }, false);
+      send('init', { side, vside, expanded });
     }
-    send('init', { side, vside, expanded });
   }
   // the window is only as big as the orb and its clickable area is an exact circle (no invisible square around it)
   function reshape() {

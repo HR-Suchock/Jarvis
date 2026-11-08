@@ -14,8 +14,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 .wrap.collapsed .head{height:60px;justify-content:center}   /* top-anchored, so the ball never drifts while the window is resizing */
 .wrap.v-bottom{flex-direction:column-reverse}
 .wrap.v-bottom .card{margin-top:0;margin-bottom:2px}
-.wrap.v-bottom:not(.collapsed) .card{animation-name:cinb}
-@keyframes cinb{from{opacity:0;transform:translateY(-6px)}}
+
 /* arc-reactor orb: static while idle (no always-on animation on a weak PC), it only moves when Jarvis is doing something */
 .orb{width:60px;height:60px;flex:none;border-radius:50%;cursor:pointer;display:grid;place-items:center;overflow:hidden;
   background:radial-gradient(circle,rgba(var(--cyrgb),.28) 0,rgba(2,12,20,.97) 62%,#010609 100%);box-shadow:0 0 0 2px var(--ring),inset 0 0 14px rgba(var(--cyrgb),.4)}
@@ -62,6 +61,10 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 .mod.run{border-color:var(--ac);background:rgba(var(--cyrgb),.16)}
 .hint{flex:none;font-size:10.5px;color:var(--mute);text-align:center;letter-spacing:.04em}
 
-.wrap:not(.collapsed) .card{animation:cin .16s ease-out}
-@keyframes cin{from{opacity:0;transform:translateY(6px)}}
+/* the panel grows out of the ball, like a chat head opening */
+.wrap:not(.collapsed) .card{animation:cpop .22s cubic-bezier(.2,.85,.25,1) both}
+.wrap.side-right .card{transform-origin:100% 0}.wrap.side-left .card{transform-origin:0 0}
+.wrap.v-bottom.side-right .card{transform-origin:100% 100%}.wrap.v-bottom.side-left .card{transform-origin:0 100%}
+@keyframes cpop{from{opacity:0;transform:scale(.5)}60%{opacity:1}to{opacity:1;transform:none}}
+
 @media (prefers-reduced-motion:reduce){.wrap .card{animation:none}}
