@@ -36,7 +36,9 @@ const TIER = {
   procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', filepart: 'ctl',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
-  stopmedia: 'input'
+  stopmedia: 'input',
+  // v1.33.0
+  ytkey: 'input', clickname: 'input', focusapp: 'ctl'
 };
 
 // Windows "Settings" pages that may be opened (fixed list)
@@ -307,10 +309,14 @@ function make(deps) {
       if (m) {
         const win = html.slice(m.index, m.index + 4000), t = /"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/.exec(win);
         let title = ''; try { title = t ? JSON.parse('"' + t[1] + '"') : ''; } catch (e) { title = t ? t[1] : ''; }
-        if (await openUrl('https://www.youtube.com/watch?v=' + m[1] + '&autoplay=1')) return R(true, title ? 'Playing ' + clip(title, 80) + ' on YouTube.' : 'Playing it on YouTube.');
+        const wurl = 'https://www.youtube.com/watch?v=' + m[1] + '&autoplay=1';
+        if (await ytNavigate(wurl)) return R(true, title ? 'Playing ' + clip(title, 80) + ' in the same YouTube tab.' : 'Playing it in the same YouTube tab.');
+        if (await openUrl(wurl)) { ytOpenedAt = Date.now(); return R(true, title ? 'Playing ' + clip(title, 80) + ' on YouTube.' : 'Playing it on YouTube.'); }
       }
     } catch (e) { /* fall through to the search page */ }
-    return (await openUrl(search)) ? R(true, 'I opened the YouTube results for ' + q + '; pick one to play.') : R(false, 'I could not open YouTube.');
+    if (await ytNavigate(search)) return R(true, 'I searched YouTube for ' + q + ' in the same tab; pick one to play.');
+    if (await openUrl(search)) { ytOpenedAt = Date.now(); return R(true, 'I opened the YouTube results for ' + q + '; pick one to play.'); }
+    return R(false, 'I could not open YouTube.');
   }
 
 
@@ -415,6 +421,96 @@ function make(deps) {
     } catch (e) { helper = null; return 'Mouse control could not start.'; }
   }
   const press = (vk) => ['k ' + vk + ' 0', 'k ' + vk + ' 2'];
+
+
+  // ---------------------------------------------------------------- v1.33.0: same-tab YouTube, seek keys, click-by-name, switch app, key combos
+  // One small C# helper (compiled by PowerShell on demand) to list visible windows, focus one, and press keys.
+  const JW_TYPE = "Add-Type -TypeDefinition @'\n" +
+    "using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;\n" +
+    "public class JW {\n" +
+    "  public delegate bool CB(IntPtr h, IntPtr l);\n" +
+    "  [DllImport(\"user32.dll\")] static extern bool EnumWindows(CB cb, IntPtr l);\n" +
+    "  [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);\n" +
+    "  [DllImport(\"user32.dll\")] static extern bool IsWindowVisible(IntPtr h);\n" +
+    "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);\n" +
+    "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n" +
+    "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);\n" +
+    "  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr h);\n" +
+    "  [DllImport(\"user32.dll\")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e);\n" +
+    "  public static List<KeyValuePair<IntPtr,string>> All() {\n" +
+    "    var l = new List<KeyValuePair<IntPtr,string>>();\n" +
+    "    EnumWindows(delegate(IntPtr h, IntPtr p) { if (IsWindowVisible(h)) { var sb = new StringBuilder(300); GetWindowText(h, sb, 300); if (sb.Length > 0) l.Add(new KeyValuePair<IntPtr,string>(h, sb.ToString())); } return true; }, IntPtr.Zero);\n" +
+    "    return l;\n" +
+    "  }\n" +
+    "  public static string Title(IntPtr h) { var sb = new StringBuilder(300); GetWindowText(h, sb, 300); return sb.ToString(); }\n" +
+    "  public static bool Focus(IntPtr h) {\n" +
+    "    if (IsIconic(h)) ShowWindow(h, 9);\n" +
+    "    keybd_event(0x12, 0, 0, UIntPtr.Zero); SetForegroundWindow(h); keybd_event(0x12, 0, 2, UIntPtr.Zero);\n" +
+    "    System.Threading.Thread.Sleep(250);\n" +
+    "    return GetForegroundWindow() == h;\n" +
+    "  }\n" +
+    "}\n'@\n";
+  // Browser windows show the ACTIVE tab's title, so a window titled "... - YouTube - Google Chrome" is currently on YouTube.
+  const YT_FIND = "$yt = $null; foreach ($w in [JW]::All()) { if ($w.Value -match '(^|\\s-\\s)YouTube(\\s-\\s|$)' -and $w.Value -match '(Google Chrome|Microsoft Edge|Brave|Opera|Vivaldi|Mozilla Firefox)$') { $yt = $w.Key; break } }\n";
+  const JARVIS_NOT = "$me = $false; try { $fg = [JW]::GetForegroundWindow(); if ([JW]::Title($fg) -match 'J\\.A\\.R\\.V\\.I\\.S') { $me = $true } } catch { }\n" +
+    "if ($me) { foreach ($w in [JW]::All()) { if ($w.Value -notmatch 'J\\.A\\.R\\.V\\.I\\.S|Program Manager|Task Switching|Windows Input|Settings$') { [void][JW]::Focus($w.Key); break } } }\n";
+  let ytOpenedAt = 0;                                            // set only when Jarvis itself opened YouTube; other tabs are never touched
+  const YT_REUSE_MS = 6 * 3600 * 1000;
+  const SK_ESC = "function Esc($t) { [regex]::Replace($t, '[+^%~(){}\\[\\]]', '{$0}') }\n";
+  async function ytNavigate(url) {
+    if (!ytOpenedAt || Date.now() - ytOpenedAt > YT_REUSE_MS) return false;
+    const script = JW_TYPE + SK_ESC + YT_FIND +
+      "if (-not $yt) { 'NONE'; exit }\n" +
+      "if (-not [JW]::Focus($yt)) { 'NOFOCUS'; exit }\n" +
+      "Add-Type -AssemblyName System.Windows.Forms\n" +
+      "[System.Windows.Forms.SendKeys]::SendWait('^l'); Start-Sleep -Milliseconds 250\n" +
+      "[System.Windows.Forms.SendKeys]::SendWait((Esc $env:JARVIS_URL)); Start-Sleep -Milliseconds 120\n" +
+      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); 'OK'\n";
+    const r = await ps(script, { JARVIS_URL: url }, 20000);
+    return !!(r.ok && /OK\s*$/.test(r.out));
+  }
+  // YouTube keys: j/l = 10 s, arrows = 5 s, f = full screen, m = mute, c = captions, k = play/pause, shift+n = next video
+  const YT_KEYS = { back10: 'j', fwd10: 'l', back5: '{LEFT}', fwd5: '{RIGHT}', fullscreen: 'f', mute: 'm', captions: 'c', playpause: 'k', next: '+n' };
+  const YT_SAY = { back10: 'Back 10 seconds.', fwd10: 'Forward 10 seconds.', back5: 'Back 5 seconds.', fwd5: 'Forward 5 seconds.', fullscreen: 'Toggled full screen.', mute: 'Toggled mute.', captions: 'Toggled subtitles.', playpause: 'Play or pause.', next: 'Next video.' };
+  const GEN_KEYS = { back10: '{LEFT}{LEFT}', fwd10: '{RIGHT}{RIGHT}', back5: '{LEFT}', fwd5: '{RIGHT}', fullscreen: '{F11}', mute: '', captions: 'c', playpause: ' ', next: '' };
+  async function sendWindowKeys(keys, afterFocus) {
+    const script = JW_TYPE + "Add-Type -AssemblyName System.Windows.Forms\n" + afterFocus + "[System.Windows.Forms.SendKeys]::SendWait($env:JARVIS_SK); 'OK'\n";
+    return ps(script, { JARVIS_SK: keys }, 15000);
+  }
+  async function stepAwayFromJarvis() {
+    if (!(deps.jarvisFocused && deps.jarvisFocused())) return;
+    await ps(JW_TYPE + JARVIS_NOT, {}, 12000);
+  }
+  function parseCombo(str) {
+    const MODS = { ctrl: 0x11, control: 0x11, shift: 0x10, alt: 0x12, win: 0x5B, windows: 0x5B, meta: 0x5B, super: 0x5B, cmd: 0x5B };
+    const NAMED = { enter: 0x0D, return: 0x0D, esc: 0x1B, escape: 0x1B, tab: 0x09, space: 0x20, backspace: 0x08, delete: 0x2E, del: 0x2E, insert: 0x2D, ins: 0x2D, home: 0x24, end: 0x23,
+      pageup: 0x21, pgup: 0x21, pagedown: 0x22, pgdn: 0x22, left: 0x25, up: 0x26, right: 0x27, down: 0x28, printscreen: 0x2C, prtsc: 0x2C, '-': 0xBD, '=': 0xBB, ',': 0xBC, '.': 0xBE, '/': 0xBF, ';': 0xBA, "'": 0xDE, '[': 0xDB, ']': 0xDD, '\\': 0xDC, '`': 0xC0 };
+    const EXT = { 0x2D: 1, 0x2E: 1, 0x24: 1, 0x23: 1, 0x21: 1, 0x22: 1, 0x25: 1, 0x26: 1, 0x27: 1, 0x28: 1, 0x2C: 1 };
+    const parts = String(str || '').toLowerCase().replace(/\s+/g, '').split('+').filter((x) => x !== '');
+    if (String(str || '').trim().endsWith('++')) parts.push('=');                                   // "ctrl++" = ctrl and plus (the = key)
+    if (!parts.length || parts.length > 6) return null;
+    const mods = []; let key = null, label = [];
+    for (const raw of parts) {
+      const t = raw;
+      if (Object.prototype.hasOwnProperty.call(MODS, t)) { const vk = MODS[t]; if (mods.indexOf(vk) < 0) mods.push(vk); label.push(t === 'control' ? 'Ctrl' : t.charAt(0).toUpperCase() + t.slice(1)); continue; }
+      if (key !== null) return null;                                                                 // only one main key
+      let vk = null;
+      if (/^[a-z]$/.test(t)) vk = t.toUpperCase().charCodeAt(0);
+      else if (/^[0-9]$/.test(t)) vk = t.charCodeAt(0);
+      else if (/^f([1-9]|1\d|2[0-4])$/.test(t)) vk = 0x70 + parseInt(t.slice(1), 10) - 1;
+      else if (Object.prototype.hasOwnProperty.call(NAMED, t)) vk = NAMED[t];
+      if (vk === null) return null;
+      key = vk; label.push(t.length === 1 ? t.toUpperCase() : t.charAt(0).toUpperCase() + t.slice(1));
+    }
+    if (!mods.length && key === null) return null;
+    return { mods: mods, key: key, ext: key !== null && !!EXT[key], label: label.join('+') };
+  }
+  function comboLines(c) {
+    const lines = c.mods.map((vk) => 'k ' + vk + ' 0');
+    if (c.key !== null) { lines.push('k ' + c.key + ' ' + (c.ext ? 1 : 0)); lines.push('k ' + c.key + ' ' + (c.ext ? 3 : 2)); }
+    c.mods.slice().reverse().forEach((vk) => lines.push('k ' + vk + ' 2'));
+    return lines;
+  }
 
   const H = {
 
@@ -618,7 +714,12 @@ function make(deps) {
       } else if (a === 'down') lines = ['e 2 0 0 0'];
       else if (a === 'up') lines = ['e 4 0 0 0'];
       else if (a === 'scroll') { const n = int(d, -40, 40); if (!n) return R(true, 'ok'); lines = ['e 2048 0 0 ' + (-n * 40)]; }
-      else if (a === 'key') {
+      else if (a === 'combo') {
+        const c = parseCombo(d);
+        if (!c) return R(false, 'I did not understand that shortcut. Try for example ctrl+shift+t or alt+f4.');
+        lines = comboLines(c); said = 'Pressed ' + c.label + '.';
+        await stepAwayFromJarvis();
+      } else if (a === 'key') {
         const k = d.toLowerCase();
         if (k === 'alttab') lines = ['k 18 0'].concat(press(9), ['k 18 2']);
         else if (Object.prototype.hasOwnProperty.call(MKEYS, k)) lines = press(MKEYS[k]);
@@ -654,11 +755,58 @@ function make(deps) {
       t = String(t || '').trim();
       return t ? R(true, 'The PC clipboard says: ' + clip(t.replace(/\s+/g, ' '), 240)) : R(true, 'The PC clipboard is empty.');
     },
+    async ytkey(arg) {
+      const k = String(arg || '').toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(YT_KEYS, k)) return R(false, 'I do not know that playback key.');
+      if (platform !== 'win32') return R(false, WINMSG);
+      // the YouTube tab Jarvis opened (or any browser window currently on YouTube) gets the key; otherwise the window you were using
+      const script = JW_TYPE + "Add-Type -AssemblyName System.Windows.Forms\n" + YT_FIND +
+        "if ($yt) { if (-not [JW]::Focus($yt)) { 'NOFOCUS'; exit }; [System.Windows.Forms.SendKeys]::SendWait($env:JARVIS_YT); 'YT'; exit }\n" +
+        JARVIS_NOT + "if ($env:JARVIS_GEN -ne '') { [System.Windows.Forms.SendKeys]::SendWait($env:JARVIS_GEN); 'GEN' } else { 'NONE' }\n";
+      const r = await ps(script, { JARVIS_YT: YT_KEYS[k], JARVIS_GEN: GEN_KEYS[k] }, 20000);
+      if (!r.ok) return fail(r, 'The key press failed.');
+      if (/NOFOCUS/.test(r.out)) return R(false, 'I could not bring the YouTube window to the front. Click it once and try again.');
+      if (/YT/.test(r.out)) return R(true, YT_SAY[k]);
+      if (/GEN/.test(r.out)) return R(true, YT_SAY[k] + ' (sent to the window you were using)');
+      return R(false, 'There is no YouTube tab open to do that in.');
+    },
+    async clickname(arg) {
+      const name = String(arg || '').trim().slice(0, 60);
+      if (!name || /[\r\n\0]/.test(name)) return R(false, 'Which button should I click?');
+      if (platform !== 'win32') return R(false, WINMSG);
+      const script = JW_TYPE + "Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes\nAdd-Type -AssemblyName System.Windows.Forms\n" +
+        "$h = [JW]::GetForegroundWindow(); if ([JW]::Title($h) -match 'J\\.A\\.R\\.V\\.I\\.S') { $h = [IntPtr]::Zero; foreach ($w in [JW]::All()) { if ($w.Value -notmatch 'J\\.A\\.R\\.V\\.I\\.S|Program Manager|Task Switching|Windows Input|Settings$') { $h = $w.Key; break } } }\n" +
+        "if ($h -eq [IntPtr]::Zero) { 'NOWIN'; exit }\n" +
+        "$root = [System.Windows.Automation.AutomationElement]::FromHandle($h)\n" +
+        "$n = $env:JARVIS_NAME; $names = @($n, \"$n ad\", \"$n ads\", \"$n Ads\"); $el = $null\n" +
+        "foreach ($x in $names) { $c = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $x, [System.Windows.Automation.PropertyConditionFlags]::IgnoreCase); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c); if ($el) { break } }\n" +
+        "if (-not $el) { 'NOTFOUND'; exit }\n" +
+        "$p = $null; if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) { $p.Invoke(); 'OK' } else { try { $el.SetFocus(); Start-Sleep -Milliseconds 120; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); 'OK' } catch { 'NOCLICK' } }\n";
+      const r = await ps(script, { JARVIS_NAME: name }, 25000);
+      if (!r.ok) return fail(r, 'I could not click that.');
+      if (/OK\s*$/.test(r.out)) return R(true, 'Clicked ' + name + '.');
+      if (/NOWIN/.test(r.out)) return R(false, 'I could not find a window to click in.');
+      if (/NOCLICK/.test(r.out)) return R(false, 'I found ' + name + ' but could not click it.');
+      return R(false, 'I could not see a button called ' + name + '. In Chrome, browser pages only show their buttons to Jarvis after accessibility is on: open chrome://accessibility and switch on "Native accessibility API support".');
+    },
+    async focusapp(arg) {
+      const name = String(arg || '').trim().slice(0, 40);
+      if (!name || !/^[\w .+-]+$/.test(name)) return R(false, 'Which app should I switch to?');
+      if (platform !== 'win32') return R(false, WINMSG);
+      const script = "$n = $env:JARVIS_APP; $p = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.ProcessName -like \"*$n*\" -or $_.MainWindowTitle -like \"*$n*\") -and $_.MainWindowTitle -notmatch 'J\\.A\\.R\\.V\\.I\\.S' } | Select-Object -First 1\n" +
+        "if (-not $p) { 'NONE'; exit }\n" + JW_TYPE + "if ([JW]::Focus($p.MainWindowHandle)) { 'OK' } else { 'NOFOCUS' }\n";
+      const r = await ps(script, { JARVIS_APP: name }, 15000);
+      if (!r.ok) return fail(r, 'I could not switch windows.');
+      if (/OK\s*$/.test(r.out)) return R(true, 'Switched to ' + name + '.');
+      if (/NOFOCUS/.test(r.out)) return R(false, 'Windows would not let me bring ' + name + ' to the front. Click it once, or press Alt and Tab.');
+      return R(false, name + ' is not open. Say “open ' + name + '” to start it.');
+    },
     async pckey(arg) {
       const name = String(arg || '').toLowerCase(), codes = KEYS[name];
       if (!codes) return R(false, 'I do not know that key command.');
       const script = "Add-Type -Name K -Namespace J -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e);'; " +
         "$c = $env:JARVIS_KEYS.Split(',') | ForEach-Object { [byte]([int]$_) }; foreach ($k in $c) { [J.K]::keybd_event($k,0,0,[UIntPtr]::Zero) }; [array]::Reverse($c); foreach ($k in $c) { [J.K]::keybd_event($k,0,2,[UIntPtr]::Zero) }";
+      await stepAwayFromJarvis();
       const r = await ps(script, { JARVIS_KEYS: codes.join(',') });
       return r.ok ? R(true, KEY_SAY[name]) : fail(r, 'The key press failed.');
     },

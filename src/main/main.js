@@ -28,7 +28,7 @@ function saveFromPhone(name, mime, data) {
   } catch (e) { return { ok: false, msg: 'Could not save the file on the PC.' }; }
 }
 function notifyFile(file, dir) { try { const n = new Notification({ title: 'Jarvis — file from your phone', body: file + ' was saved. Click to show it.', silent: false }); n.on('click', () => shell.openPath(dir)); n.show(); } catch (e) { /* ignore */ } }
-const extra = require('./pc-extra-actions')({ clipboard, shell, saveFile: saveFromPhone, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
+const extra = require('./pc-extra-actions')({ jarvisFocused: () => { try { return BrowserWindow.getAllWindows().some((w) => w.isFocused() && !w.isDestroyed()); } catch (e) { return false; } }, clipboard, shell, saveFile: saveFromPhone, getPath: (n) => { try { return app.getPath(n); } catch (e) { return ''; } } });
 const TIERS = Object.assign({}, TIER, extra.TIER);
 
 const APP_URL = 'jarvis://app/';
