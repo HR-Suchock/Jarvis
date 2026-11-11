@@ -120,22 +120,37 @@ async function runLocalAction(type, arg, arg2) {
 async function sendToPhone(type, arg) {
   const c = linkCfg();
   if (!c.enabled || !c.dbUrl || !c.secret || !relay) return { ok: false, msg: 'link to phone is not set up' };
-  const r = await relay.send(type, arg, '', 15000);
+  const r = await relay.send(type, arg, '', 30000);
   return { ok: !!(r && r.ok), msg: String((r && r.msg) || (r && r.ok ? 'done' : 'no answer')).slice(0, 80) };
 }
-// ---- files to the phone: cut into encrypted pieces, sent one by one; the phone saves them (pictures into Gallery, others into Downloads)
-const FILE_MAX = 3000000;
+// ---- files to the phone. Same Wi-Fi: sent straight over the network (up to 100 MB). Otherwise: encrypted pieces through Firebase (up to 5 MB).
+const FILE_MAX = 100000000, FB_MAX = 5000000;
 async function sendFileToPhone(buf, name, mime) {
   const c = linkCfg();
   if (!c.enabled || !c.dbUrl || !c.secret || !relay) return { ok: false, msg: 'link to phone is not set up' };
   if (!Buffer.isBuffer(buf) || !buf.length) return { ok: false, msg: 'that file is empty' };
-  if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 3 MB' };
+  if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 100 MB' };
   name = String(name || 'file').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(-80) || 'file';
   mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(mime || '') ? String(mime).toLowerCase() : 'application/octet-stream';
-  const CH = 36000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');
+  try {                                                // 1) same Wi-Fi: ask the phone for an address, then send directly
+    const o = await relay.send('lanoffer', '', '', 15000);
+    if (o && o.ok) {
+      const r = await require('./lan').send(o.msg, buf, name, mime);
+      if (r && r.ok) return { ok: true, msg: String(r.msg || 'sent over Wi-Fi').slice(0, 80) };
+      if (r && r.partial && buf.length > FB_MAX) return { ok: false, msg: String(r.msg || 'the Wi-Fi transfer failed').slice(0, 80) };
+    }
+  } catch (e) { /* fall through to the internet route */ }
+  if (buf.length > FB_MAX) return { ok: false, msg: 'files over 5 MB go by Wi-Fi only — put the phone and this PC on the same Wi-Fi (the phone must be reachable) and try again' };
+  const CH = 36000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');   // 2) Firebase pieces
   let last = null;
   for (let i = 0; i < n; i++) {
-    last = await relay.send('filepart', JSON.stringify({ id, i, n, size: buf.length, name, mime }), buf.subarray(i * CH, (i + 1) * CH).toString('base64'), 30000);
+    const meta = JSON.stringify({ id, i, n, size: buf.length, name, mime }), b64 = buf.subarray(i * CH, (i + 1) * CH).toString('base64');
+    last = null;
+    for (let a = 0; a < 3; a++) {                    // a lost answer is retried; the phone ignores a repeated piece
+      last = await relay.send('filepart', meta, b64, 30000);
+      if (last && last.ok) break;
+      await new Promise((r) => setTimeout(r, 1500 * (a + 1)));
+    }
     if (!last || !last.ok) return { ok: false, msg: String((last && last.msg) || 'no answer').slice(0, 80) + (i === 0 ? ' — if this keeps failing, publish the new firebase-rules.json once (files need its 70000 limit)' : '') };
   }
   return { ok: true, msg: String((last && last.msg) || 'sent').slice(0, 80) };

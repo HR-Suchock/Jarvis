@@ -33,7 +33,7 @@ const TIER = {
   jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input', mediakey: 'ctl',
   logoff: 'danger', emptybin: 'danger',
   // v1.28.0: PC management + files from the phone
-  procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', filepart: 'ctl',
+  procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', filepart: 'ctl', lanoffer: 'ctl',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
   stopmedia: 'input',
@@ -399,8 +399,38 @@ function make(deps) {
   function remap(type, arg) {
     const a = String(arg || '').toLowerCase().trim();
     if (type === 'volume') { if (a === 'upstep') return { type: 'mediakey', arg: 'volup', arg2: '1' }; if (a === 'downstep') return { type: 'mediakey', arg: 'voldown', arg2: '1' }; if (a === 'up' || a === 'louder') return { type: 'mediakey', arg: 'volup', arg2: '5' }; if (a === 'down' || a === 'quieter') return { type: 'mediakey', arg: 'voldown', arg2: '5' }; if (a === 'mute') return { type: 'mediakey', arg: 'mute', arg2: '1' }; }
-    if (type === 'media') { const k = { play: 'playpause', pause: 'playpause', resume: 'playpause', toggle: 'playpause', next: 'next', previous: 'prev', stop: 'stop' }[a]; if (k) return { type: 'mediakey', arg: k, arg2: '1' }; }
+    if (type === 'media') { const k = { play: 'playpause', pause: 'playpause', resume: 'playpause', toggle: 'playpause', next: 'next', previous: 'prev', stop: 'stop' }[a]; if (k) return { type: 'mediakey', arg: k, arg2: (a === 'play' || a === 'resume') ? 'play' : a === 'pause' ? 'pause' : '1' }; }
     return null;
+  }
+
+  // v1.34: ask Windows what the media player is doing (SMTC), so the reply can say "Paused." / "Playing: <title>."
+  const SMTC_PS = "try{Add-Type -AssemblyName System.Runtime.WindowsRuntime;" +
+    "$null=[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime];" +
+    "$at=([System.WindowsRuntimeSystemExtensions].GetMethods()|Where-Object{$_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'})[0];" +
+    "function Aw($o,$t){$k=$at.MakeGenericMethod($t).Invoke($null,@($o));[void]$k.Wait(4000);$k.Result};" +
+    "$m=Aw ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]);" +
+    "$s=$m.GetCurrentSession(); if(-not $s){'NONE'}else{$st=$s.GetPlaybackInfo().PlaybackStatus;" +
+    "$p=Aw ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties]);'S|'+$st+'|'+$p.Title}}catch{'ERR'}";
+  async function mediaState() {
+    const r = await ps(SMTC_PS, {}, 8000);
+    const m = /S\|(\w+)\|(.*)/.exec(r.out || '');
+    if (m) return { st: /playing/i.test(m[1]) ? 'playing' : 'paused', title: (m[2] || '').trim().slice(0, 60) };
+    return /NONE/.test(r.out || '') ? { st: 'none' } : { st: '?' };
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function playPause(want) {
+    const before = await mediaState();
+    const t = (x) => (x && x.title ? ' ' + x.title : '');
+    if (before.st === 'playing' && want === 'play') return R(true, 'Already playing' + (before.title ? ': ' + before.title : '') + '.');
+    if (before.st === 'paused' && want === 'pause') return R(true, 'Already paused.');
+    const err = helperWrite(press(MKEYS.playpause));
+    if (err) return R(false, err);
+    if (before.st === '?' || before.st === 'none') return R(true, before.st === 'none' ? 'Sent play/pause. No media player reported itself, so I cannot tell which it did.' : 'Sent play/pause.');
+    await sleep(900);
+    const after = await mediaState();
+    if (after.st === 'playing') return R(true, 'Playing' + (after.title ? ': ' + after.title : '') + '.');
+    if (after.st === 'paused') return R(true, 'Paused' + (before.title ? ': ' + before.title : '') + '.');
+    return R(true, before.st === 'playing' ? 'Paused.' : 'Playing.');
   }
   let helper = null, helperIdle = null;
   function helperWrite(lines) {
@@ -420,6 +450,7 @@ function make(deps) {
       return '';
     } catch (e) { helper = null; return 'Mouse control could not start.'; }
   }
+  const PAD_SAY = { win: 'Opened the Start menu.', alttab: 'Switched window.', enter: 'Pressed Enter.', esc: 'Pressed Escape.', tab: 'Pressed Tab.', backspace: 'Deleted a character.', delete: 'Pressed Delete.', f5: 'Refreshed.', f11: 'Toggled full screen.', space: 'Pressed Space.', home: 'Pressed Home.', end: 'Pressed End.', pageup: 'Page up.', pagedown: 'Page down.', left: 'Left.', right: 'Right.', up: 'Up.', down: 'Down.' };
   const press = (vk) => ['k ' + vk + ' 0', 'k ' + vk + ' 2'];
 
 
@@ -473,10 +504,6 @@ function make(deps) {
   const YT_KEYS = { back10: 'j', fwd10: 'l', back5: '{LEFT}', fwd5: '{RIGHT}', fullscreen: 'f', mute: 'm', captions: 'c', playpause: 'k', next: '+n' };
   const YT_SAY = { back10: 'Back 10 seconds.', fwd10: 'Forward 10 seconds.', back5: 'Back 5 seconds.', fwd5: 'Forward 5 seconds.', fullscreen: 'Toggled full screen.', mute: 'Toggled mute.', captions: 'Toggled subtitles.', playpause: 'Play or pause.', next: 'Next video.' };
   const GEN_KEYS = { back10: '{LEFT}{LEFT}', fwd10: '{RIGHT}{RIGHT}', back5: '{LEFT}', fwd5: '{RIGHT}', fullscreen: '{F11}', mute: '', captions: 'c', playpause: ' ', next: '' };
-  async function sendWindowKeys(keys, afterFocus) {
-    const script = JW_TYPE + "Add-Type -AssemblyName System.Windows.Forms\n" + afterFocus + "[System.Windows.Forms.SendKeys]::SendWait($env:JARVIS_SK); 'OK'\n";
-    return ps(script, { JARVIS_SK: keys }, 15000);
-  }
   async function stepAwayFromJarvis() {
     if (!(deps.jarvisFocused && deps.jarvisFocused())) return;
     await ps(JW_TYPE + JARVIS_NOT, {}, 12000);
@@ -567,12 +594,18 @@ function make(deps) {
       walk(dir, 0);
       return R(true, files ? 'Cleaned ' + files + ' old temporary files (' + (bytes / 1048576).toFixed(1) + ' MB freed).' : 'The temp folder is already tidy (nothing older than two days).');
     },
-    // a file sent from the phone arrives in numbered pieces; the finished file is handed to deps.saveFile
+    // same-Wi-Fi transfer: opens a one-shot receiver and tells the phone where to connect (details in lan.js)
+    async lanoffer() {
+      if (!deps.saveFile) return R(false, 'This PC cannot save files.');
+      const o = await require('./lan').offer((n, m, d) => deps.saveFile(n, m, d));
+      return o ? R(true, o) : R(false, 'This PC has no Wi-Fi or network address to receive on.');
+    },
+    // a small file (up to 5 MB) sent from the phone over the internet link arrives in numbered pieces; the finished file is handed to deps.saveFile
     async filepart(metaJson, b64) {
       try {
         const m = JSON.parse(String(metaJson || '{}'));
         const id = String(m.id || '').replace(/[^A-Za-z0-9_-]/g, ''); const i = m.i | 0, n = m.n | 0, size = +m.size || 0;
-        if (id.length < 4 || id.length > 40 || n < 1 || n > 120 || i < 0 || i >= n || size < 1 || size > 3000000) return R(false, 'That file transfer was not valid.');
+        if (id.length < 4 || id.length > 40 || n < 1 || n > 160 || i < 0 || i >= n || size < 1 || size > 5000000) return R(false, 'That file transfer was not valid.');
         const name = cleanName(m.name), mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(String(m.mime || '')) ? String(m.mime).toLowerCase() : 'application/octet-stream';
         if (BLOCKED_EXT.test(name)) return R(false, 'I do not accept that type of file (programs and scripts are refused).');
         const part = Buffer.from(String(b64 || ''), 'base64');
@@ -580,7 +613,12 @@ function make(deps) {
         const now = Date.now();
         for (const [k, v] of inbound) if (now - v.t > 300000) inbound.delete(k);
         let f = inbound.get(id);
-        if (i === 0) { if (!f && inbound.size >= 3) return R(false, 'Too many files at once.'); f = { n, size, next: 0, parts: [], got: 0, t: now }; inbound.set(id, f); }
+        if (f && i === f.next - 1 && i < n - 1 && f.n === n) { f.t = now; return R(true, 'Piece ' + f.next + ' of ' + n + '.'); }     // a repeated piece (the answer was lost): ignore it
+        if (i === 0) {
+          if (!f && inbound.size >= 3) return R(false, 'Too many files at once.');
+          f = { n, size, next: 0, parts: [], got: 0, t: now };
+          inbound.set(id, f);
+        }
         if (!f || f.next !== i || f.n !== n) { inbound.delete(id); return R(false, 'File pieces arrived out of order. Please send it again.'); }
         f.got += part.length; if (f.got > size) { inbound.delete(id); return R(false, 'The file was larger than announced.'); }
         f.parts.push(part); f.next++; f.t = now;
@@ -693,6 +731,7 @@ function make(deps) {
     async mediakey(arg, arg2) {
       const k = String(arg || '').toLowerCase();
       if (!Object.prototype.hasOwnProperty.call(MEDIAKEY_SAY, k)) return R(false, 'I do not know that media key.');
+      if (k === 'playpause' && platform === 'win32') return playPause(String(arg2 || ''));
       const n = int(arg2, 1, 10) || 1; let lines = [];
       for (let i = 0; i < n; i++) lines = lines.concat(press(MKEYS[k]));
       const err = helperWrite(lines);
@@ -722,9 +761,10 @@ function make(deps) {
       } else if (a === 'key') {
         const k = d.toLowerCase();
         if (k === 'alttab') lines = ['k 18 0'].concat(press(9), ['k 18 2']);
+        else if (k === 'playpause' && platform === 'win32') return playPause('');
         else if (Object.prototype.hasOwnProperty.call(MKEYS, k)) lines = press(MKEYS[k]);
         else return R(false, 'I do not know that key.');
-        said = 'Pressed ' + k + '.';
+        said = MEDIAKEY_SAY[k] || PAD_SAY[k] || ('Pressed ' + k + '.');
       } else return R(false, 'I do not know that mouse action.');
       const err = helperWrite(lines);
       return err ? R(false, err) : R(true, said || 'ok');

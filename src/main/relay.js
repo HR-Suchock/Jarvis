@@ -162,7 +162,7 @@ class Relay extends EventEmitter {
     if (!ctx) return { ok: false, msg: 'Device link is not set up. Open Settings → Device Link.' };
     try {
       const id = await this._post(ctx, this.peer, { k: 'cmd', type: String(type), arg: String(arg || ''), arg2: String(arg2 || '') });
-      return await this._await(id, timeoutMs || 20000);
+      return await this._await(id, timeoutMs || 35000);
     } catch (e) {
       return { ok: false, msg: 'Could not reach the link database: ' + (e && e.message ? e.message : e) };
     }

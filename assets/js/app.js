@@ -858,13 +858,23 @@
       if (done) return; done = true;
       var raw = String(d.msg || ''), msg = d.ok ? raw : linkFriendly(raw);
       lkAdd({ t: t0, d: 'out', ty: type, a: logArg(type, arg), ok: !!d.ok, m: msg.slice(0, 160), ms: Date.now() - t0 });
-      if (d.ok) noteOnline(true); else if (/^No answer/.test(raw)) noteOnline(linkDiag().connected === false ? null : false);
+      if (d.ok) noteOnline(true);
+      if (!d.ok && /^No answer/.test(raw) && linkDiag().connected !== false && !fin.noPing) {
+        // The command got no reply in time. Before calling the other device offline, ask it a quick question: slow actions on an older PC
+        // (starting a program, searching, driving a window) often finish after the wait ran out.
+        fin.noPing = true;
+        pcPing(function (pr) {
+          if (pr && pr.ok) { noteOnline(true); msg = 'Your ' + OTHER + ' is online, but this took longer than expected. It may still be working on it. Check it, or ask again in a moment.'; }
+          else noteOnline(false);
+          cb({ ok: false, msg: msg, raw: raw });
+        });
+        return;
+      }
       cb({ ok: !!d.ok, msg: msg, raw: raw });
     }
     linkWait[id] = fin;
-    setTimeout(function () { if (!done) { delete linkWait[id]; fin({ ok: false, msg: 'No answer from your ' + (PC ? 'phone' : 'PC') + '.' }); } }, 30000);
+    setTimeout(function () { if (!done) { delete linkWait[id]; fin({ ok: false, msg: 'No answer from your ' + (PC ? 'phone' : 'PC') + '.' }); } }, 65000);
   }
-  function fmtAgo(t) { var s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : s < 86400 ? Math.round(s / 3600) + 'h ago' : Math.round(s / 86400) + 'd ago'; }
   function lkText() {
     var a = lkGet().slice(-40).reverse();
     if (!a.length) return 'No commands yet.';
@@ -1011,7 +1021,7 @@
     var stat = el('div', 'pad-stat', ''); body.appendChild(stat);
     function say(msg, bad) { stat.textContent = msg || ''; stat.className = 'pad-stat' + (bad ? ' bad' : ''); }
     function fire(a, d) { if (B && B.linkFire) B.linkFire('mouse', a, d || ''); }
-    function send(a, d, okmsg) { linkSend('mouse', a, d || '', function (r) { say(r.ok ? (okmsg || '') : r.msg, !r.ok); }); }
+    function send(a, d, okmsg) { linkSend('mouse', a, d || '', function (r) { say(r.ok ? (okmsg || (r.msg && r.msg !== 'ok' ? r.msg : '')) : r.msg, !r.ok); }); }
     var pad = el('div', 'pad'); pad.id = 'pad-area'; pad.appendChild(el('span', '', 'Drag to move · tap = click · hold = right-click · two fingers = scroll'));
     body.appendChild(pad);
     // --- gestures
@@ -1071,8 +1081,8 @@
       if (!parts.length) { say('Tick a modifier and/or type a key first.', true); return; }
       send('combo', parts.join('+'), 'Sent ' + parts.join('+').toUpperCase().replace(/\+/g, ' + ') + '.');
     }], ['CLEAR', function () { clearMods(); ki.value = ''; say('', false); }]]);
-    var PRE = [['COPY', 'ctrl+c'], ['PASTE', 'ctrl+v'], ['CUT', 'ctrl+x'], ['UNDO', 'ctrl+z'], ['REDO', 'ctrl+y'], ['ALL', 'ctrl+a'], ['SAVE', 'ctrl+s'], ['FIND', 'ctrl+f'], ['NEW TAB', 'ctrl+t'], ['CLOSE TAB', 'ctrl+w'], ['REOPEN TAB', 'ctrl+shift+t'], ['NEXT TAB', 'ctrl+tab'],
-      ['TASK MGR', 'ctrl+shift+esc'], ['ALT+F4', 'alt+f4'], ['DESKTOP', 'win+d'], ['EXPLORER', 'win+e'], ['LOCK', 'win+l'], ['ALL WINDOWS', 'win+tab'], ['SNIP', 'win+shift+s'], ['SNAP L', 'win+left'], ['SNAP R', 'win+right'], ['PRINT SCR', 'printscreen']];
+    var PRE = [['COPY', 'ctrl+c'], ['PASTE', 'ctrl+v'], ['CUT', 'ctrl+x'], ['UNDO', 'ctrl+z'], ['ALL', 'ctrl+a'], ['NEW TAB', 'ctrl+t'], ['CLOSE TAB', 'ctrl+w'], ['REOPEN TAB', 'ctrl+shift+t'], 
+      ['TASK MGR', 'ctrl+shift+esc'], ['ALT+F4', 'alt+f4'], ['DESKTOP', 'win+d'], ['LOCK', 'win+l'], ['SNIP', 'win+shift+s'], ['SNAP L', 'win+left'], ['SNAP R', 'win+right']];
     row(PRE.map(function (c) { return [c[0], function () { send('combo', c[1], c[0] + '.'); }]; })).classList.add('wrap');
     body.appendChild(el('div', 'dl-note', 'Media and volume'));
     row([['⏮', function () { send('key', 'prev'); }], ['⏯', function () { send('key', 'playpause'); }], ['⏭', function () { send('key', 'next'); }], ['VOL−', function () { send('key', 'voldown'); }], ['VOL+', function () { send('key', 'volup'); }], ['MUTE', function () { send('key', 'mute'); }]]);
@@ -1607,6 +1617,8 @@
       return { kind: 'reply', text: 'Offline I can ' + OFFLINE_OK + '.' };
     if ((m = t.match(/^(?:remember|note|make a note|take a note|save a note)(?: that)?(?: to)? (.+)$/)))
       return { kind: 'ui', fn: function () { var n = notesGet(); n.push(raw.replace(/^\s*(?:remember|note|make a note|take a note|save a note)(?: that)?(?: to)?\s+/i, '').trim()); notesSet(n.slice(-100)); }, text: 'Noted, ' + addrName() + '.' };
+    if (/^(?:open|go to)(?: my| the)? notes(?: app| panel| page)?$|^(?:add|write|start) (?:a )?(?:new )?note$/.test(t))
+      return { kind: 'ui', fn: function () { openNotes(true); }, text: 'Opening your notes, ' + addrName() + '.', silent: true };
     if (/^(?:show|read|list|what are)(?: me)?(?: all)?(?: my| the)? notes$/.test(t) || /^what did i ask you to remember$/.test(t))
       return { kind: 'reply', text: (function () { var n = notesGet(); return n.length ? 'Your notes:\n' + n.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') : 'You have no notes yet.'; })() };
     var tnote = t.replace(/^(delete|remove|erase|forget|cancel) (?:my |the )?(last|latest|first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)) note$/, '$1 note $2');
@@ -1850,7 +1862,42 @@
 
   /* ------------------------------------------------------------------ mini features: notes, calculator, briefing */
   function notesGet() { try { var a = JSON.parse(store.get('notes') || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
-  function notesSet(a) { store.set('notes', JSON.stringify(a)); }
+  function notesSet(a) { var j = JSON.stringify(a); store.set('notes', j); try { if (B && B.notesSync) B.notesSync(j); } catch (e) { /* ignore */ } }
+  /* NOTES panel: write a note in one tap, see them all, delete one. Opened by the home-screen notes widget, by "open notes", or from the dashboard. */
+  var notesP = null;
+  function openNotes(focusAdd) {
+    if (!notesP) notesP = makePanel('notes', 'NOTES');
+    var body = notesP.body;
+    function draw() {
+      body.innerHTML = '';
+      var box = el('div', 'gcard'), ta = el('textarea', 'srch'); ta.rows = 3; ta.maxLength = 500; ta.placeholder = 'Write a note\u2026'; ta.style.width = '100%'; ta.style.boxSizing = 'border-box'; ta.style.resize = 'vertical';
+      var save = el('button', 'btn pri', 'SAVE NOTE'); save.style.marginTop = '8px';
+      function doSave() { var v = ta.value.trim(); if (!v) return; var n = notesGet(); n.push(v.slice(0, 500)); notesSet(n.slice(-100)); toast('Note saved'); draw(); }
+      save.addEventListener('click', doSave);
+      ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSave(); } });
+      box.appendChild(ta); box.appendChild(save); body.appendChild(box);
+      var list = notesGet(), card = el('div', 'gcard'); card.appendChild(el('h4', '', 'YOUR NOTES (' + list.length + ')'));
+      if (!list.length) card.appendChild(el('div', 'dl-note', 'Nothing yet. You can also say \u201ctake a note\u2026\u201d.'));
+      list.map(function (t, i) { return { t: t, i: i }; }).reverse().forEach(function (x) {
+        var row = el('div', 'irow'), tx = el('span', '', ''), del = el('button', 'btn danger', 'DELETE');
+        tx.textContent = x.t; tx.style.flex = '1'; tx.style.color = 'var(--fg, #E6F7FB)'; tx.style.wordBreak = 'break-word'; del.style.marginLeft = '10px'; del.style.flex = 'none';
+        del.addEventListener('click', function () { var n = notesGet(); n.splice(x.i, 1); notesSet(n); draw(); });
+        row.appendChild(tx); row.appendChild(del); card.appendChild(row);
+      });
+      if (list.length > 1) {
+        var clr = el('button', 'btn danger', 'DELETE ALL'); clr.style.marginTop = '10px';
+        clr.addEventListener('click', function () {
+          if (!clr.getAttribute('data-sure')) { clr.setAttribute('data-sure', '1'); clr.textContent = 'TAP AGAIN TO CONFIRM'; setTimeout(function () { clr.removeAttribute('data-sure'); clr.textContent = 'DELETE ALL'; }, 3000); return; }
+          notesSet([]); draw();
+        });
+        card.appendChild(clr);
+      }
+      body.appendChild(card);
+      return ta;
+    }
+    var ta0 = draw(); notesP.open();
+    if (focusAdd) setTimeout(function () { try { ta0.focus(); } catch (e) { /* ignore */ } }, 350);
+  }
   function calc(src) {
     var e = String(src).toLowerCase().replace(/,/g, '')
       .replace(/(\d+(?:\.\d+)?)\s*(?:%|percent)\s*of\s*/g, '($1/100)*')
@@ -1952,13 +1999,31 @@
   }
   /* "what's on my screen": read the open screen (Accessibility), then let the AI do the task with that text */
   function screenAsk(li) {
-    if (PC) { respond('Reading the screen works on the phone, ' + addrName() + '. Ask me on the phone, or say “on my phone, what is on my screen”.'); return; }
-    var r = doAction('screentext');
-    if (!r.ok) { addMsg('err', r.msg); history.push({ role: 'assistant', content: r.msg }); saveHistory(); setState('idle'); speakText(r.msg); return; }
-    var order = providerOrder();
-    if (!order.length) { respondError('Neural link not configured. Open Settings and add a free API key.', 'My AI core is not connected, ' + addrName() + '.'); return; }
-    setState('thinking'); var typing = addTyping(); failLog = [];
-    tryProvider(order, 0, typing, 'Text currently visible on the user\'s phone screen (read from the screen, so it may include menu and button labels):\n"""\n' + String(r.msg).slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
+    if (PC) { respond('Reading the screen works on the phone, ' + addrName() + '. Ask me on the phone, or say \u201con my phone, what is on my screen\u201d.'); return; }
+    var st = doAction('screenlater');
+    if (!st.ok) { addMsg('err', st.msg); history.push({ role: 'assistant', content: st.msg }); saveHistory(); setState('idle'); speakText(st.msg); return; }
+    var say = 'Switch to the screen you want me to read, ' + addrName() + '. I will look in a few seconds, then come back and explain it.';
+    addMsg('act', '\ud83d\udc41 Reading the screen in 7 seconds\u2026 open the app or page now.', true);
+    speakText(say); setState('idle');
+    var tries = 0;
+    (function poll() {
+      var r = doAction('screenresult'), m = r && r.msg;
+      if (m === '@WAIT' || (m === '@NONE' && tries < 4)) { if (++tries < 40) setTimeout(poll, 1000); else respond('I could not read the screen in time, ' + addrName() + '. Try again.'); return; }
+      if (m === '@NONE') { return; }
+      if (m === '@JARVIS') { respond('I only saw Jarvis itself. Say it again, then switch to the other app before the countdown ends, ' + addrName() + '.'); return; }
+      if (m === '@EMPTY' || !m) { respond('That screen has no text I can read, ' + addrName() + ' \u2014 it may be a picture, a video or a protected page.'); return; }
+      var order = providerOrder();
+      if (!order.length) { respondError('Neural link not configured. Open Settings and add a free API key.', 'My AI core is not connected, ' + addrName() + '.'); return; }
+      setState('thinking'); var typing = addTyping(); failLog = [];
+      tryProvider(order, 0, typing, 'Text currently visible on the user\'s phone screen (read from the screen, so it may include menu and button labels):\n"""\n' + String(m).slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
+    })();
+  }
+  function greetAndListen() {          // used by the clap and by the spoken name: greets like at start-up, then listens
+    handsFreeSuspended = false; emptyListens = 0; lastFromVoice = true;
+    var lines = ['All systems are online.', 'At your service.', 'Ready when you are.'];
+    var g = greeting() + ', ' + addrName() + '. ' + lines[Math.floor(Math.random() * lines.length)];
+    addMsg('j', g); greetListen = true; speakText(g);
+    setTimeout(function () { if (greetListen && state === 'idle') { greetListen = false; startListening(); } }, 9000);
   }
   function pcActionAsync(li) {
     setState('thinking'); pipeAct();
@@ -2337,7 +2402,7 @@
     loadCal();
     var rg = el('div'); rg.innerHTML = rings() + lists(); b.appendChild(rg);
     var qr = el('div', 'dl-grid two');
-    [['SYSTEM GRAPHS', openMonitor], ['REFRESH', function () { openDashboard(); }]].forEach(function (x) { var q = el('button', 'btn', x[0]); q.addEventListener('click', x[1]); qr.appendChild(q); });
+    [['SYSTEM GRAPHS', openMonitor], ['NOTES', function () { openNotes(true); }], ['REFRESH', function () { openDashboard(); }]].forEach(function (x) { var q = el('button', 'btn', x[0]); q.addEventListener('click', x[1]); qr.appendChild(q); });
     b.appendChild(qr);
     dashP.open();
     clearInterval(dashTimer);
@@ -2674,10 +2739,40 @@
       if (yn !== null) { pendingConfirm.resolve(yn); return; }
       clearConfirm(true);
     }
+    if (runMulti(text)) return;
     var li = localIntent(text);
     if (li) { runLocal(li, text); return; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { respond(offlineText()); return; }
     askAI(text);
+  }
+
+  /* Multitasking: several simple phone commands in one sentence ("open YouTube and set a timer for 5 minutes", "torch on then take a note buy milk").
+     Only used when EVERY part is a plain phone action or note/UI command that needs no confirmation; otherwise the sentence goes to the normal route. */
+  var MULTI_SPLIT = /\s*(?:,\s*and\s+then\s+|,\s*then\s+|\s+and\s+then\s+|\s+after\s+that\s+|\s+and\s+also\s+|\s+then\s+|,\s+and\s+|\s+and\s+|\s+also\s+)/i;
+  function runMulti(text) {
+    if (PC || text.length > 300) return false;
+    var segs = text.split(MULTI_SPLIT).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (segs.length < 2 || segs.length > 4) return false;
+    var items = [], i, li;
+    for (i = 0; i < segs.length; i++) {
+      li = localIntent(segs[i]);
+      if (!li || (li.kind !== 'action' && li.kind !== 'ui') || (li.kind === 'action' && (needsConfirm(li) || li.type === 'call' || li.type === 'sms'))) return false;
+      items.push(li);
+    }
+    var done = [], failed = [];
+    items.forEach(function (it) {
+      try {
+        if (it.kind === 'ui') { it.fn(); if (it.text) done.push(it.text.replace(/[.!]+$/, '')); return; }
+        var r = doAction(it.type, it.arg, it.arg2);
+        if (!r.ok && it.type === 'open' && /\.[a-z]{2,}$/.test(it.arg)) r = doAction('url', it.arg);
+        if (r.ok) done.push(String(r.msg || '').replace(/[.!]+$/, '')); else failed.push(String(r.msg || 'That did not work.'));
+      } catch (e) { failed.push('One of those did not work.'); }
+    });
+    var msg = '';
+    if (done.length) msg = pick(LEADS) + ', ' + addrName() + '. ' + done.filter(Boolean).join('. ') + '.';
+    if (failed.length) { msg += (msg ? ' But ' : '') + failed.join(' '); }
+    respond(msg || 'Done, ' + addrName() + '.');
+    return true;
   }
 
   function clearChat() {
@@ -2739,16 +2834,12 @@
       handsFreeSuspended = false; emptyListens = 0;
       var rest = String((d && d.rest) || '').trim();
       if (rest.length >= 3) { handleUser(rest, true); return; }
-      startListening();
+      greetAndListen();
     },
     wakeError: function (d) { S.wake = false; save(); toast((d && d.msg) || 'The wake word stopped.', 4200); },
     clapHeard: function () {
       if (!PC || !S.clap || state !== 'idle' || appPaused) return;
-      handsFreeSuspended = false; emptyListens = 0; lastFromVoice = true;
-      var lines = ['All systems are online.', 'At your service.', 'Ready when you are.'];
-      var g = greeting() + ', ' + addrName() + '. ' + lines[Math.floor(Math.random() * lines.length)];
-      addMsg('j', g); greetListen = true; speakText(g);                       // greets like at start-up, then listens
-      setTimeout(function () { if (greetListen && state === 'idle') { greetListen = false; startListening(); } }, 9000);
+      greetAndListen();
     },
     ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
@@ -2814,6 +2905,7 @@
       if (pendingListen) { pendingListen = false; if (perms().mic) setTimeout(startListening, 250); }
     },
     monitor: function () { if (settingsOpen) closeSettings(); setTimeout(openMonitor, 350); },
+    notes: function (d) { if (settingsOpen) closeSettings(); setTimeout(function () { openNotes(!!(d && d.add)); }, 350); },
     assist: function () { if (settingsOpen) closeSettings(); setTimeout(startListening, 350); },
     ballTap: function () {
       if (state === 'speaking') { stopSpeakingNow(); setState('idle'); handsFreeSuspended = true; return; }
@@ -3213,7 +3305,7 @@
         var gd = grid(2);
         send(gd, 'BRIGHT −', 'brightness', 'down'); send(gd, 'BRIGHT +', 'brightness', 'up'); send(gd, 'DARK MODE', 'darkmode', 'toggle');
         send(gd, 'SCREENSHOT', 'screenshot', '', { cls: '' });
-        grp('SEND TO THE PC', 'Photos and files (up to 3 MB) are saved in the PC’s Pictures\\Jarvis or Downloads\\Jarvis folder.');
+        grp('SEND TO THE PC', 'Photos and files are saved (up to 100 MB on the same Wi-Fi, up to 5 MB over the internet) in the PC’s Pictures\\Jarvis or Downloads\\Jarvis folder.');
         var gf = grid(2);
         gb(gf, 'SEND PHOTO / FILE', 'pri', function () { try { if (!B.linkPickFile || !B.linkPickFile()) toast('Could not open the file picker', 3000); } catch (e) { toast('Could not open the file picker', 3000); } });
         gb(gf, 'SEND CLIPBOARD', '', function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); });
@@ -3325,7 +3417,6 @@
     });
     var twc = el('div', 'card'); twc.style.padding = '12px'; twc.appendChild(tw); sa.appendChild(twc);
     if (PC) sa.appendChild(toggleRow('Side panels', 'Live graphs, a system scan and task progress beside Jarvis. Light on the PC and paused when the window is in the background.', function () { return S.pcHud !== false; }, function (v) { S.pcHud = v; hudSet(v); }));
-    if (PC) sa.appendChild(toggleRow('Floating ball', 'The always-on-top Jarvis orb (Ctrl+Alt+J shows or hides it; right-click the ball or the tray icon for the same switch)', function () { try { var q = B.permissions(); if (typeof q === 'string') q = JSON.parse(q); return !!q.ball; } catch (e) { return false; } }, function (v) { B.setBall(v); toast(v ? 'Floating ball on' : 'Floating ball off'); }));
     var ot = el('div', 'themes');
     [['classic', 'Classic reactor'], ['minimal', 'Minimal rings'], ['dense', 'Dense tech']].forEach(function (o2) {
       var b2 = el('button', 'theme-dot' + ((S.orbStyle || 'classic') === o2[0] ? ' on' : ''), o2[1]);
@@ -3430,6 +3521,7 @@
     var s4 = section(PC ? 'PC ACCESS' : 'PHONE ACCESS', PC ? 'Voice input sends short recordings of your voice to Groq, OpenAI or Gemini (whichever key you added) to turn them into text. Nothing is recorded until you press the microphone.' : 'Jarvis needs these to call people, find contacts and hear you. Opening apps, YouTube, maps, timers and the flashlight need nothing extra.');
     var host = el('div'); host.id = 'perm-host'; s4.appendChild(host);
     if (PC) {
+      if (PC) s4.appendChild(toggleRow('Floating ball', 'The always-on-top Jarvis orb (Ctrl+Alt+J shows or hides it; right-click the ball or the tray icon for the same switch)', function () { try { var q = B.permissions(); if (typeof q === 'string') q = JSON.parse(q); return !!q.ball; } catch (e) { return false; } }, function (v) { B.setBall(v); toast(v ? 'Floating ball on' : 'Floating ball off'); }));
       s4.appendChild(toggleRow('Clap twice to wake him', 'Two sharp claps and Jarvis greets you, then listens. Works on this PC only, the sound is analysed on the PC and never recorded or sent anywhere. Loud music or a noisy room can trigger it by mistake.', function () { return !!S.clap; }, function (v) { S.clap = v; try { B.clapSet(v); } catch (e) { /* */ } if (v) toast('Clap twice any time', 3000); }));
       s4.appendChild(toggleRow('Say \u201cJarvis\u201d to wake him', 'Jarvis listens for his name while this app is open (also when only the floating ball shows). Only short, loud bursts of speech are sent for transcription, at most 10 a minute, and anything without his name is thrown away. Say \u201cJarvis, open Chrome\u201d in one go. Ctrl+Alt+Space also starts listening from anywhere.', function () { return !!S.wake; }, function (v) { S.wake = v; try { B.wakeSet(v); } catch (e) { /* */ } if (v) toast('Say \u201cJarvis\u201d any time', 3000); }));
       s4.appendChild(toggleRow('Keep listening after replies', 'Hands-free inside the app. Say \u201cstop\u201d to end.', function () { return S.handsFree; }, function (v) { S.handsFree = v; handsFreeSuspended = false; }));
@@ -3621,7 +3713,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.33.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.36.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3639,12 +3731,14 @@
 
     watchPc();
     try { var shr = B && B.consumeShare ? B.consumeShare() : ''; if (shr) setTimeout(function () { shareToPc(shr); }, 1200); } catch (e) { /* ignore */ }
+    try { if (B && B.notesSync) B.notesSync(JSON.stringify(notesGet())); } catch (e) { /* ignore */ }      // keeps the home-screen notes widget current
     var assist = '';
     try { assist = B ? B.consumeLaunchFlag() : ''; } catch (e) { /* ignore */ }
 
     if (!S.askedPerms && B) { S.askedPerms = true; store.set('settings', JSON.stringify(S)); setTimeout(function () { B.requestPermissions(); }, 900); }
 
     if (assist === 'monitor') { setTimeout(openMonitor, 500); return; }
+    if (assist === 'notes' || assist === 'notesadd') { setTimeout(function () { openNotes(assist === 'notesadd'); }, 600); return; }
     if (assist === 'assist') { setTimeout(startListening, 700); return; }
 
     var linked = providerOrder().length > 0;
@@ -3770,6 +3864,6 @@
 
   if (PC) setTimeout(function () { hudSet(S.pcHud !== false); }, 1200);
   if (PC && (S.wake || S.clap)) setTimeout(function () { try { B.clapSet(!!S.clap); B.wakeSet(!!S.wake); } catch (e) { /* */ } }, 3500);
-  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify };
+  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify, handleUser: handleUser };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

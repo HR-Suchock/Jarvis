@@ -164,7 +164,7 @@
       if (!wk || wk.dead) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       var ctx = new AC(), src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(4096, 1, 1);
       var r = wk = { stream: stream, ctx: ctx, src: src, node: node, dead: false };
-      var clapPrev = 0, clapLast = 0, clapCool = 0, quietBetween = false;
+      var clapPrev = 0, clapLast = 0, clapCool = 0, quietBetween = false, clapPrevB = 0;
       var rate = ctx.sampleRate, floor = 0.004, pre = [], got = [], speaking = false, t0 = 0, quietSince = 0, voiced = 0, frames = 0, busy = false;
       node.onaudioprocess = function (e) {
         if (r.dead) return;
@@ -173,14 +173,26 @@
         var pk = 0, v0;
         for (i = 0; i < d.length; i++) { v0 = d[i]; sum += v0 * v0; if (v0 > pk) pk = v0; else if (-v0 > pk) pk = -v0; }
         var rms = Math.sqrt(sum / d.length), thr = Math.max(0.02, floor * 4);
-        if (clapOn) {                                   // two sharp, short sounds 0.2-0.9 s apart, with quiet in between; nothing is recorded or sent anywhere
-          var imp = pk >= Math.max(0.18, floor * 14) && pk / (rms || 1) >= 5;
-          if (imp && now - clapLast > 200 && now > clapCool) {
-            if (clapPrev && now - clapPrev <= 900 && quietBetween) { clapPrev = 0; clapCool = now + 3000; emit('clapHeard', {}); }
+        if (clapOn) {                                   // two sharp, short sounds 0.15-1.0 s apart, with quiet in between; nothing is recorded or sent anywhere
+          // looks at 512-sample slices (about 10 ms) so a clap is not smoothed away by the big audio buffer, and compares each slice with the room noise
+          // measured a moment ago, so it works for quiet claps, far claps and noisy rooms alike
+          var BL = 512, bj, bi, bs, brms, bpk, bv, hit = false, quietNow = true;
+          for (bj = 0; bj + BL <= d.length; bj += BL) {
+            bs = 0; bpk = 0;
+            for (bi = bj; bi < bj + BL; bi++) { bv = d[bi]; bs += bv * bv; if (bv > bpk) bpk = bv; else if (-bv > bpk) bpk = -bv; }
+            brms = Math.sqrt(bs / BL);
+            var base = Math.max(0.004, floor), jump = brms > Math.max(0.025, base * 7) && brms > clapPrevB * 3.5 && bpk / (brms || 1) >= 2.2;
+            if (jump) hit = true;
+            if (brms > Math.max(0.03, base * 5)) quietNow = false;
+            clapPrevB = clapPrevB * 0.6 + brms * 0.4;
+          }
+          if (hit && now - clapLast > 150 && now > clapCool) {
+            if (clapPrev && now - clapPrev <= 1000 && quietBetween) { clapPrev = 0; clapCool = now + 3000; emit('clapHeard', {}); }
             else { clapPrev = now; quietBetween = false; }
             clapLast = now;
-          } else if (!imp && clapPrev && rms < Math.max(0.05, floor * 6) && now - clapLast > 90) quietBetween = true;
-          if (clapPrev && now - clapPrev > 900) clapPrev = 0;
+          } else if (!hit && clapPrev && quietNow && now - clapLast > 60) quietBetween = true;
+          if (clapPrev && now - clapPrev > 1000) clapPrev = 0;
+          if (hit) { return; }                          // a clap must not raise the measured room noise
         }
         if (!wakeOn) { floor = floor * 0.97 + Math.min(rms, 0.03) * 0.03; return; }
         if (!speaking) floor = floor * 0.97 + Math.min(rms, 0.03) * 0.03;
