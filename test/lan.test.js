@@ -4,7 +4,7 @@ test('LAN transfer round trip (small and spooled big)', async (t) => {
   if (!lan.lanIps().length) return t.skip('no LAN address in this sandbox');
   for (const size of [1234, 6000000]) {
     let got = null;
-    const off = await lan.offer(async (n, m, d) => { got = { n, m, d }; return { ok: true, msg: 'saved ' + n }; });
+    const off = await lan.offer(async (n, m, d, isPath) => { got = { n, m, d: isPath ? require('fs').readFileSync(d) : d }; return { ok: true, msg: 'saved ' + n }; });
     assert.ok(/^LAN /.test(off));
     const buf = require('crypto').randomBytes(size);
     const r = await lan.send(off, buf, 'a b.bin', 'application/x-test');

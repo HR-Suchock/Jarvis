@@ -37,11 +37,24 @@ function offer(onFile, opts) {
     let done = false, srv = null;
     const close = () => { if (done) return; done = true; try { srv.close(); } catch (e) { /* ignore */ } };
     srv = net.createServer((sock) => {
-      let head = Buffer.alloc(0), hdr = null, dec = null, got = 0, hash = crypto.createHash('sha256'), parts = [], tail = Buffer.alloc(0), file = '', fd = null, finished = false;
+      // the file is written to a temporary file with a normal (non-blocking) write stream, so a big transfer never freezes the app;
+      // onFile(name, mime, tempFilePath) is then asked to move it into place.
+      let head = Buffer.alloc(0), hdr = null, dec = null, got = 0, tail = Buffer.alloc(0), file = '', ws = null, finished = false;
+      const hash = crypto.createHash('sha256');
       sock.setTimeout(30000, () => sock.destroy());
+      const cleanup = () => { try { if (ws) ws.destroy(); } catch (e) { /* ignore */ } ws = null; try { if (file) fs.unlinkSync(file); } catch (e) { /* ignore */ } file = ''; close(); };
       const fail = (m) => { if (finished) return; finished = true; try { sock.end('ERR ' + m + '\n'); } catch (e) { /* ignore */ } cleanup(); };
-      const cleanup = () => { try { if (fd !== null) fs.closeSync(fd); } catch (e) { /* ignore */ } fd = null; try { if (file) fs.unlinkSync(file); } catch (e) { /* ignore */ } close(); };
       sock.on('error', () => { finished = true; cleanup(); });
+      sock.on('close', () => { if (!finished) { finished = true; cleanup(); } });
+      const complete = () => {
+        if (tail.subarray(0, 64).toString('utf8') !== hash.digest('hex')) { finished = false; fail('the file was damaged on the way'); return; }
+        const f = file; file = '';
+        ws.end(() => {
+          Promise.resolve().then(() => onFile(hdr.name, hdr.mime, f, true)).then(
+            (r) => { try { sock.end((r && r.ok ? 'OK ' : 'ERR ') + String((r && r.msg) || '').slice(0, 200) + '\n'); } catch (e) { /* ignore */ } try { fs.unlinkSync(f); } catch (e) { /* moved or gone */ } close(); },
+            () => { try { sock.end('ERR could not save\n'); } catch (e) { /* ignore */ } try { fs.unlinkSync(f); } catch (e) { /* ignore */ } close(); });
+        });
+      };
       sock.on('data', (chunk) => {
         if (finished) return;
         try {
@@ -56,22 +69,19 @@ function offer(onFile, opts) {
             if (!(size > 0) || size > maxSize) { fail('bad size'); return; }
             hdr = { size, name: unb64u(p[3] || ''), mime: unb64u(p[4] || '') };
             dec = crypto.createDecipheriv('aes-256-ctr', keyOf(token), ivOf(token));
-            if (size > 4000000) { file = path.join(os.tmpdir(), 'jarvis-lan-' + token.slice(0, 8) + '.part'); fd = fs.openSync(file, 'w'); }
+            file = path.join(os.tmpdir(), 'jarvis-lan-' + token.slice(0, 8) + '.part');
+            ws = fs.createWriteStream(file);
+            ws.on('error', () => fail('the PC could not write the file (disk full?)'));
             if (!chunk.length) return;
           }
           const plain = dec.update(chunk);
           let body = plain;
           if (got + plain.length > hdr.size) { body = plain.subarray(0, hdr.size - got); tail = Buffer.concat([tail, plain.subarray(hdr.size - got)]); }
-          if (body.length) { hash.update(body); got += body.length; if (fd !== null) fs.writeSync(fd, body); else parts.push(Buffer.from(body)); }
-          if (got === hdr.size && tail.length >= 64) {
-            finished = true;
-            if (tail.subarray(0, 64).toString('utf8') !== hash.digest('hex')) { finished = false; fail('the file was damaged on the way'); return; }
-            if (fd !== null) { fs.closeSync(fd); fd = null; }
-            const data = file ? fs.readFileSync(file) : Buffer.concat(parts);
-            if (file) { try { fs.unlinkSync(file); } catch (e) { /* ignore */ } file = ''; }
-            Promise.resolve(onFile(hdr.name, hdr.mime, data)).then((r) => { try { sock.end((r && r.ok ? 'OK ' : 'ERR ') + String((r && r.msg) || '').slice(0, 200) + '\n'); } catch (e) { /* ignore */ } close(); },
-              () => { try { sock.end('ERR could not save\n'); } catch (e) { /* ignore */ } close(); });
+          if (body.length) {
+            hash.update(body); got += body.length;
+            if (!ws.write(body)) { sock.pause(); ws.once('drain', () => { try { sock.resume(); } catch (e) { /* ignore */ } }); }
           }
+          if (got === hdr.size && tail.length >= 64) { finished = true; complete(); }
         } catch (e) { fail('receive failed'); }
       });
     });

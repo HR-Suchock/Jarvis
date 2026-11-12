@@ -181,7 +181,7 @@ async function tavily(key, query) {
   if (!key || !String(key).trim()) throw new ApiError(0, 'Add your Tavily API key in Settings > Services.');
   if (!query || !String(query).trim()) throw new ApiError(0, 'What should I search for?');
   const o = JSON.parse(await http('POST', 'https://api.tavily.com/search', { Authorization: 'Bearer ' + key.trim() },
-    { query: query.trim(), max_results: 5, include_answer: true, search_depth: 'basic' }, 30000));
+    Object.assign({ query: query.trim(), max_results: 5, include_answer: true, search_depth: 'basic' }, looksFresh(query) ? { topic: 'news', days: 7 } : { time_range: 'year' }), 30000));
   const res = [];
   if (o.answer && o.answer !== 'null') res.push({ title: 'Summary', snippet: o.answer, link: '' });
   for (const it of (o.results || []).slice(0, 5)) {
@@ -189,6 +189,54 @@ async function tavily(key, query) {
     if (c.length > 320) c = c.slice(0, 320) + '...';
     res.push({ title: it.title || '', snippet: c, link: it.url || '' });
   }
+  return res;
+}
+
+// ---- keyless / extra web search (v1.37)
+const FRESH = /\b(news|latest|today|tonight|yesterday|now|current|currently|recent|recently|breaking|scores?|results?|prices?|rate|stock|weather|updates?|this week|this month|2026|2027)\b/i;
+function looksFresh(q) { return FRESH.test(String(q || '')); }
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const htmlText = (s) => String(s).replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+const xmlTag = (x, n) => { const m = new RegExp('<' + n + '>([\\s\\S]*?)</' + n + '>').exec(x); return m ? htmlText(m[1].replace('<![CDATA[', '').replace(']]>', '')) : ''; };
+async function newsRss(res, query, max) {
+  const xml = await http('GET', 'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q=' + enc(query.trim()), { 'User-Agent': UA }, null, 20000);
+  let n = 0;
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    if (n >= max) break;
+    const t = xmlTag(m[1], 'title'), l = xmlTag(m[1], 'link'), d = xmlTag(m[1], 'pubDate').replace(/ \d\d:\d\d:\d\d.*$/, '');
+    if (t) { res.push({ title: t, snippet: (d ? d + ' \u2014 ' : '') + 'news headline', link: l }); n++; }
+  }
+}
+async function ddg(res, query, max) {
+  const html = await http('GET', 'https://html.duckduckgo.com/html/?q=' + enc(query.trim()), { 'User-Agent': UA }, null, 20000);
+  const links = [...html.matchAll(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)], snips = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)];
+  let n = 0;
+  for (let i = 0; i < links.length && n < max; i++) {
+    let link = links[i][1]; const title = htmlText(links[i][2]); let snip = snips[i] ? htmlText(snips[i][1]) : '';
+    const u = /uddg=([^&]+)/.exec(link); if (u) { try { link = decodeURIComponent(u[1]); } catch (e) { /* keep */ } }
+    if (link.startsWith('//')) link = 'https:' + link;
+    if (!title || link.includes('duckduckgo.com/y.js')) continue;
+    if (snip.length > 320) snip = snip.slice(0, 320) + '...';
+    res.push({ title, snippet: snip, link }); n++;
+  }
+}
+async function freeSearch(query) {
+  if (!query || !String(query).trim()) throw new ApiError(0, 'What should I search for?');
+  const res = []; let err = null; const fresh = looksFresh(query);
+  if (fresh) { try { await newsRss(res, query, 4); } catch (e) { err = e; } }
+  try { await ddg(res, query, fresh ? 3 : 5); } catch (e) { err = e; }
+  if (!res.length && !fresh) { try { await newsRss(res, query, 5); } catch (e) { err = e; } }
+  if (!res.length) throw err || new ApiError(0, 'No results found.');
+  return res;
+}
+async function serper(key, query) {
+  if (!key || !String(key).trim()) throw new ApiError(0, 'Add your Serper API key in Settings > Services.');
+  if (!query || !String(query).trim()) throw new ApiError(0, 'What should I search for?');
+  const body = { q: query.trim(), num: 5 }; if (looksFresh(query)) body.tbs = 'qdr:w';
+  const o = JSON.parse(await http('POST', 'https://google.serper.dev/search', { 'X-API-KEY': key.trim() }, body, 25000));
+  const res = [];
+  const ab = o.answerBox; if (ab) { const a = ab.answer || ab.snippet || ''; if (a) res.push({ title: 'Summary', snippet: String(a), link: '' }); }
+  for (const it of (o.organic || []).slice(0, 5)) res.push({ title: it.title || '', snippet: String(it.snippet || '').replace(/\n/g, ' '), link: it.link || '' });
   return res;
 }
 
@@ -210,4 +258,4 @@ async function weather(key, place, units) {
   };
 }
 
-module.exports = { __http: http, doFetch,  chat, listModels, googleSearch, tavily, weather, ApiError, netError };
+module.exports = { __http: http, doFetch,  chat, listModels, googleSearch, tavily, freeSearch, serper, weather, ApiError, netError };

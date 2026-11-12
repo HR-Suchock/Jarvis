@@ -543,3 +543,33 @@ html.calm .radar .sweep,html.calm .radar .blip,html.pc-lite .radar .blip{animati
 .hp-tasks li.done{color:var(--mute)}.hp-tasks li.done i::after{background:var(--ok)}
 @keyframes tsk{0%{transform:translateX(-100%)}100%{transform:translateX(290%)}}
 @media (prefers-reduced-motion:reduce){.hp,.radar .sweep,.radar .blip,.hp-tasks li.run i::after{animation:none}}
+
+/* ---------- PC window: voice first, chat second (v1.37) ---------- */
+html.pc-app #app{padding-left:22px;padding-right:22px}
+html.pc-app .stage{flex:1 1 auto;height:auto;min-height:220px;margin:0}
+html.pc-app .status-wrap{bottom:12px}
+html.pc-app .status{font-size:15px;letter-spacing:.42em}
+html.pc-app .partial{font-size:22px;min-height:30px;white-space:normal;max-width:880px;margin:6px auto 0}
+.caption{max-width:min(860px,70vw);margin:10px auto 0;padding:0 18px;font-size:20px;line-height:1.4;color:var(--tx);text-align:center;opacity:0;transform:translateY(6px);
+  transition:opacity .35s,transform .35s;max-height:4.4em;overflow:hidden;text-shadow:0 0 14px rgba(var(--cyrgb),.35)}
+.caption.show{opacity:.96;transform:none}
+.caption.me{color:var(--cy2);font-style:italic;font-size:17px}
+.caption.err{color:var(--am)}
+html.pc-app .log{position:absolute;right:0;top:56px;bottom:0;width:min(440px,42vw);z-index:6;padding:14px 16px 76px;background:linear-gradient(180deg,rgba(2,12,20,.96),rgba(1,7,12,.98));
+  border-left:1px solid var(--line2);box-shadow:-18px 0 40px rgba(0,0,0,.55);transform:translateX(104%);transition:transform .3s ease;pointer-events:none}
+html.pc-app.chat-open .log{transform:none;pointer-events:auto}
+html.pc-app .chips{display:none}
+html.pc-app .dock{flex-direction:column;gap:8px;padding:6px 0 4px}
+html.pc-app .dock .mic{order:1;width:92px;height:92px}
+html.pc-app .dock .mic svg{width:40px;height:40px}
+html.pc-app .dock .miclab{order:2;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:.28em;color:var(--mute);text-align:center}
+html.pc-app .dock .input-wrap{order:3;flex:none;width:min(520px,60vw);height:40px;opacity:.85}
+html.pc-app .dock .input-wrap input{font-size:15px}
+html.pc-app.chat-open .dock .input-wrap{position:fixed;right:14px;bottom:12px;width:calc(min(440px,42vw) - 28px);z-index:7;opacity:1;height:46px}
+html.pc-app .chatbtn{cursor:pointer;position:relative}
+html.pc-app .chatbtn.on{background:rgba(var(--cyrgb),.22);color:#fff}
+.chatbtn .cdot{display:inline-block;width:7px;height:7px;margin-left:6px;border-radius:50%;background:var(--am);box-shadow:0 0 8px var(--am);vertical-align:middle}
+@media (max-width:900px){html.pc-app .log{width:min(440px,88vw)}html.pc-app.chat-open .dock .input-wrap{width:calc(min(440px,88vw) - 28px)}}
+html.pc-app.chat-open #app{padding-right:calc(min(440px,42vw) + 20px)}
+html.pc-app.chat-open .pchud.r{display:none}
+@media (max-width:900px){html.pc-app.chat-open #app{padding-right:22px}}

@@ -597,8 +597,10 @@ function make(deps) {
     // same-Wi-Fi transfer: opens a one-shot receiver and tells the phone where to connect (details in lan.js)
     async lanoffer() {
       if (!deps.saveFile) return R(false, 'This PC cannot save files.');
-      const o = await require('./lan').offer((n, m, d) => deps.saveFile(n, m, d));
-      return o ? R(true, o) : R(false, 'This PC has no Wi-Fi or network address to receive on.');
+      try {
+        const o = await Promise.race([require('./lan').offer((n, m, d) => deps.saveFile(n, m, d)), new Promise((r) => setTimeout(() => r(null), 8000))]);
+        return o ? R(true, o) : R(false, 'This PC has no Wi-Fi or network address to receive on.');
+      } catch (e) { return R(false, 'This PC could not open a Wi-Fi receiver.'); }
     },
     // a small file (up to 5 MB) sent from the phone over the internet link arrives in numbered pieces; the finished file is handed to deps.saveFile
     async filepart(metaJson, b64) {

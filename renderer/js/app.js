@@ -134,7 +134,9 @@
   function hasWeather() { return !!(S.services.owKey && S.services.owKey.trim()); }
   function hasTavily() { return !!(S.services.tvKey && S.services.tvKey.trim()); }
   function hasGoogleSearch() { return !!(S.services.gsKey && S.services.gsKey.trim() && S.services.gsCx && S.services.gsCx.trim()); }
-  function hasSearch() { return hasTavily() || hasGoogleSearch(); }
+  function hasSerper() { return !!(S.services.srKey && S.services.srKey.trim()); }
+  function hasFree() { return S.services.freeSearch !== false; }          // the built-in no-key search (news + DuckDuckGo)
+  function hasSearch() { return hasTavily() || hasGoogleSearch() || hasSerper() || hasFree(); }
   function hasKey(id) { var c = S.providers[id]; return !!(c && c.key && c.key.trim()); }
   function providerOrder() {
     var order = [];
@@ -191,6 +193,7 @@
     }
     while (logEl.children.length > 60) logEl.removeChild(logEl.firstChild);
     scrollLog();
+    if (PC) voiceCaption(kind, text);
     return d;
   }
   function addTyping() {
@@ -264,7 +267,24 @@
     } catch (e) { /* cosmetic */ }
   }
   if (PC) { window.addEventListener('focus', function () { perfGov(); }); window.addEventListener('blur', function () { perfGov(); }); document.addEventListener('visibilitychange', function () { perfGov(); }); try { Orb.setMaxDpr(1.25); } catch (e) { /* cosmetic */ } }
+  /* The voice state machine (idle / listening / thinking / speaking). Allowed moves are listed here so odd ones are recorded, and a watchdog
+     brings Jarvis back to idle if any state is stuck for far too long (a lost speech result, a hung AI call, a speech engine that never ends). */
+  var STATE_NEXT = { idle: ['listening', 'thinking', 'speaking'], listening: ['idle', 'thinking', 'speaking'], thinking: ['idle', 'speaking', 'listening'], speaking: ['idle', 'listening', 'thinking'] };
+  var STATE_MAX = { listening: 60000, thinking: 150000, speaking: 240000 };
+  var stateLog = [], stateWd = 0;
   function setState(s) {
+    if (state !== s) {
+      var okMove = (STATE_NEXT[state] || []).indexOf(s) >= 0;
+      stateLog.push([Date.now(), state, s, okMove ? '' : 'unexpected']); if (stateLog.length > 40) stateLog.shift();
+    }
+    clearTimeout(stateWd);
+    if (STATE_MAX[s]) stateWd = setTimeout(function () {
+      if (state !== s || (s === 'listening' && callMode)) return;                 // moved on already (a phone call mode listens for long stretches on purpose)
+      stateLog.push([Date.now(), s, 'idle', 'watchdog']);
+      try { B && B.stopListening && B.stopListening(); } catch (e) { /* */ }
+      try { B && B.stopSpeaking && B.stopSpeaking(); } catch (e) { /* */ }
+      setState('idle');
+    }, STATE_MAX[s]);
     state = s;
     try { B && B.ballState && B.ballState(s); } catch (e) { /* */ }
     Orb.setState(s);
@@ -276,6 +296,44 @@
     if (s === 'idle' || s === 'listening') { curMood = ''; try { Orb.setMood && Orb.setMood(''); } catch (e) { /* cosmetic */ } }
     if (s === 'idle' || s === 'thinking') partialEl.textContent = '';
     miniSet(s);
+  }
+
+
+  /* ------------------------------------------------------------------ PC: voice first, chat second.
+     The big orb and microphone are the centre of the PC window. What Jarvis says is shown as a large caption under the orb; the full chat
+     lives in a drawer on the right (CHAT button or Ctrl+/). */
+  var capEl = null, capTimer = 0, chatDot = null, chatBtn = null;
+  function voiceCaption(kind, text) {
+    if (!capEl) return;
+    if (kind !== 'j' && kind !== 'err' && kind !== 'u') { if (!(kind === 'act' || kind === 'sys')) return; }
+    capEl.className = 'caption' + (kind === 'err' ? ' err' : kind === 'u' ? ' me' : '');
+    var t = String(text).replace(/\s+/g, ' ').trim();
+    capEl.textContent = (kind === 'u' ? '\u201c' + t + '\u201d' : t.length > 260 ? t.slice(0, 257) + '\u2026' : t);
+    capEl.classList.add('show');
+    clearTimeout(capTimer);
+    capTimer = setTimeout(function () { capEl.classList.remove('show'); }, Math.min(30000, 7000 + t.length * 60));
+    if (!document.documentElement.classList.contains('chat-open') && chatDot && (kind === 'j' || kind === 'err')) chatDot.style.display = 'inline-block';
+  }
+  function toggleChat(on) {
+    var de = document.documentElement, v = on === undefined ? !de.classList.contains('chat-open') : !!on;
+    de.classList.toggle('chat-open', v);
+    if (chatBtn) chatBtn.classList.toggle('on', v);
+    if (v && chatDot) chatDot.style.display = 'none';
+    if (v) setTimeout(scrollLog, 80);
+  }
+  function initVoiceFirst() {
+    if (!PC) return;
+    document.documentElement.classList.add('pc-app');
+    var wrap = $('.status-wrap'); if (wrap && !capEl) { capEl = el('div', 'caption'); capEl.id = 'caption'; wrap.appendChild(capEl); }
+    var stats = $('.stats');
+    if (stats && !chatBtn) {
+      chatBtn = el('button', 'chip chip-btn chatbtn', 'CHAT'); chatBtn.title = 'Show or hide the chat (Ctrl+/)';
+      chatDot = el('i', 'cdot'); chatDot.style.display = 'none'; chatBtn.appendChild(chatDot);
+      chatBtn.addEventListener('click', function () { toggleChat(); });
+      stats.insertBefore(chatBtn, stats.firstChild);
+    }
+    var mic = $('#btn-mic'); if (mic && !$('.miclab')) { var lab = el('div', 'miclab', 'TAP, SAY \u201cJARVIS\u201d OR CLAP TWICE'); mic.parentNode.insertBefore(lab, mic.nextSibling); }
+    document.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && e.key === '/') { e.preventDefault(); toggleChat(); } });
   }
 
   /* ------------------------------------------------------------------ conversation */
@@ -474,16 +532,26 @@
 
   /* ------------------------------------------------------------------ live data tools (weather / web search) */
   function runTool(name, arg, cb, force) {
-    var id = 'x' + (++reqSeq), key = 't' + id;
-    var timer = setTimeout(function () {
-      if (pendingChat[key]) { delete pendingChat[key]; cb({ ok: false, error: 'The service took too long to respond.' }); }
-    }, 30000);
-    pendingChat[key] = function (d) { clearTimeout(timer); cb(d); };
-    var sv = S.services;
-    if (!B) { setTimeout(function () { window.JarvisNative.emit('tool', { id: id, ok: false, error: 'Preview mode: no phone attached.' }); }, 300); return; }
-    if (name === 'weather') B.weather(id, (sv.owKey || '').trim(), arg, sv.units);
-    else if (force === 'tavily' || (force !== 'google' && hasTavily())) B.tavily(id, (sv.tvKey || '').trim(), arg);
-    else B.search(id, (sv.gsKey || '').trim(), (sv.gsCx || '').trim(), arg);
+    var id = 'x' + (++reqSeq), key = 't' + id, sv = S.services, tried = '';
+    function timeout() { return setTimeout(function () { if (pendingChat[key]) { delete pendingChat[key]; cb({ ok: false, error: 'The service took too long to respond.' }); } }, 30000); }
+    function send(provider) {
+      var timer = timeout(); tried += provider + ',';
+      pendingChat[key] = function (d) {
+        clearTimeout(timer);
+        if (!d.ok && !force && name !== 'weather' && provider !== 'free' && hasFree()) { send('free'); return; }          // the chosen service failed: the keyless search backs it up
+        cb(d);
+      };
+      if (!B) { setTimeout(function () { window.JarvisNative.emit('tool', { id: id, ok: false, error: 'Preview mode: no phone attached.' }); }, 300); return; }
+      if (name === 'weather') B.weather(id, (sv.owKey || '').trim(), arg, sv.units);
+      else if (provider === 'tavily') B.tavily(id, (sv.tvKey || '').trim(), arg);
+      else if (provider === 'serper') B.lsearch(id, 'serper', (sv.srKey || '').trim(), arg);
+      else if (provider === 'free') B.lsearch(id, 'free', '', arg);
+      else B.search(id, (sv.gsKey || '').trim(), (sv.gsCx || '').trim(), arg);
+    }
+    if (name === 'weather') { send('weather'); return; }
+    send(force === 'tavily' || (force !== 'google' && force !== 'serper' && force !== 'free' && hasTavily()) ? 'tavily'
+      : force === 'serper' || (!force && hasSerper()) ? 'serper'
+      : force === 'google' || (!force && hasGoogleSearch()) ? 'google' : 'free');
   }
   function formatWeather(w) {
     var metric = w.units !== 'imperial';
@@ -1879,10 +1947,20 @@
       var list = notesGet(), card = el('div', 'gcard'); card.appendChild(el('h4', '', 'YOUR NOTES (' + list.length + ')'));
       if (!list.length) card.appendChild(el('div', 'dl-note', 'Nothing yet. You can also say \u201ctake a note\u2026\u201d.'));
       list.map(function (t, i) { return { t: t, i: i }; }).reverse().forEach(function (x) {
-        var row = el('div', 'irow'), tx = el('span', '', ''), del = el('button', 'btn danger', 'DELETE');
-        tx.textContent = x.t; tx.style.flex = '1'; tx.style.color = 'var(--fg, #E6F7FB)'; tx.style.wordBreak = 'break-word'; del.style.marginLeft = '10px'; del.style.flex = 'none';
+        var row = el('div', 'irow'), tx = el('span', '', ''), del = el('button', 'btn danger', 'DELETE'), ed = el('button', 'btn', 'EDIT');
+        tx.textContent = x.t; tx.style.flex = '1'; tx.style.color = 'var(--fg, #E6F7FB)'; tx.style.wordBreak = 'break-word'; del.style.marginLeft = '8px'; del.style.flex = 'none'; ed.style.marginLeft = '10px'; ed.style.flex = 'none';
         del.addEventListener('click', function () { var n = notesGet(); n.splice(x.i, 1); notesSet(n); draw(); });
-        row.appendChild(tx); row.appendChild(del); card.appendChild(row);
+        ed.addEventListener('click', function () {                      // edit in place: the text turns into a box with SAVE / CANCEL
+          row.innerHTML = ''; row.style.display = 'block';
+          var et = el('textarea', 'srch'); et.rows = 3; et.maxLength = 500; et.value = x.t; et.style.width = '100%'; et.style.boxSizing = 'border-box';
+          var bar = el('div', 'row'); bar.style.margin = '8px 0 0';
+          var ok = el('button', 'btn pri', 'SAVE'), no = el('button', 'btn', 'CANCEL');
+          ok.addEventListener('click', function () { var v = et.value.trim(); if (!v) { toast('A note cannot be empty'); return; } var n = notesGet(); if (n[x.i] === undefined) { draw(); return; } n[x.i] = v.slice(0, 500); notesSet(n); toast('Note updated'); draw(); });
+          no.addEventListener('click', draw);
+          bar.appendChild(ok); bar.appendChild(no); row.appendChild(et); row.appendChild(bar);
+          try { et.focus(); } catch (e) { /* ignore */ }
+        });
+        row.appendChild(tx); row.appendChild(ed); row.appendChild(del); card.appendChild(row);
       });
       if (list.length > 1) {
         var clr = el('button', 'btn danger', 'DELETE ALL'); clr.style.marginTop = '10px';
@@ -2402,7 +2480,7 @@
     loadCal();
     var rg = el('div'); rg.innerHTML = rings() + lists(); b.appendChild(rg);
     var qr = el('div', 'dl-grid two');
-    [['SYSTEM GRAPHS', openMonitor], ['NOTES', function () { openNotes(true); }], ['REFRESH', function () { openDashboard(); }]].forEach(function (x) { var q = el('button', 'btn', x[0]); q.addEventListener('click', x[1]); qr.appendChild(q); });
+    [['SYSTEM GRAPHS', openMonitor], ['REFRESH', function () { openDashboard(); }]].forEach(function (x) { var q = el('button', 'btn', x[0]); q.addEventListener('click', x[1]); qr.appendChild(q); });
     b.appendChild(qr);
     dashP.open();
     clearInterval(dashTimer);
@@ -3376,7 +3454,7 @@
     // --- services (live data)
     var sv = S.services;
     var sS = section('SERVICES', 'Optional extras. With these, Jarvis can answer "what’s the weather in Dhaka?" and look things up on the web. Keys stay on this phone.');
-    sS.appendChild(serviceCard('Web Search · Tavily', 'Recommended · free 1,000 searches a month, no card',
+    sS.appendChild(serviceCard('Web Search · Tavily', 'Free 1,000 searches a month, no card. Fresh news is searched automatically',
       function () { return hasTavily(); },
       [{ key: 'tvKey', label: 'API KEY', secret: true, ph: 'tvly-…' }],
       [['GET FREE KEY', 'https://app.tavily.com/']],
@@ -3384,6 +3462,15 @@
         if (!hasTavily()) { done(false, 'Enter the API key first.'); return; }
         runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error); }, 'tavily');
       }));
+    sS.appendChild(serviceCard('Web Search · Serper', 'Google results · 2,500 free searches, no card',
+      function () { return hasSerper(); },
+      [{ key: 'srKey', label: 'API KEY', secret: true, ph: 'Serper API key' }],
+      [['GET FREE KEY', 'https://serper.dev/']],
+      function (done) {
+        if (!hasSerper()) { done(false, 'Enter the API key first.'); return; }
+        runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error); }, 'serper');
+      }));
+    sS.appendChild(toggleRow('Built-in free web search (no key)', 'News headlines + DuckDuckGo. Used when no key is set, and as a back-up when a key fails', function () { return hasFree(); }, function (v) { S.services.freeSearch = v; }));
     sS.appendChild(serviceCard('Web Search · Google', 'Only works for existing Custom Search customers',
       function () { return hasGoogleSearch(); },
       [{ key: 'gsKey', label: 'API KEY', secret: true, ph: 'Google API key' }, { key: 'gsCx', label: 'SEARCH ENGINE ID (cx)', ph: 'e.g. 0123abc…' }],
@@ -3436,6 +3523,7 @@
     var hr2 = el('div', 'row'); hr2.style.margin = '10px 0 0'; var db0 = el('button', 'btn pri', 'DASHBOARD'); db0.addEventListener('click', function () { closeSettings(); setTimeout(openDashboard, 350); }); hr2.appendChild(db0); var mb = el('button', 'btn', 'SYSTEM MONITOR & GRAPHS'); mb.addEventListener('click', openMonitor); hr2.appendChild(mb);
     var mm = el('button', 'btn', 'MEMORY'); mm.addEventListener('click', openMemory); hr2.appendChild(mm);
     var rr = el('button', 'btn', 'ROUTINES'); rr.addEventListener('click', openRoutines); hr2.appendChild(rr);
+    var nb = el('button', 'btn pri', 'NOTES'); nb.addEventListener('click', function () { openNotes(false); }); hr2.appendChild(nb);
     sh.appendChild(toggleRow('Include news in my morning briefing', 'Needs a web search key in Services', function () { return S.briefNews !== false; }, function (v) { S.briefNews = v; })); sh.appendChild(hr2);
     body.appendChild(sh);
 
@@ -3523,6 +3611,7 @@
     if (PC) {
       if (PC) s4.appendChild(toggleRow('Floating ball', 'The always-on-top Jarvis orb (Ctrl+Alt+J shows or hides it; right-click the ball or the tray icon for the same switch)', function () { try { var q = B.permissions(); if (typeof q === 'string') q = JSON.parse(q); return !!q.ball; } catch (e) { return false; } }, function (v) { B.setBall(v); toast(v ? 'Floating ball on' : 'Floating ball off'); }));
       s4.appendChild(toggleRow('Clap twice to wake him', 'Two sharp claps and Jarvis greets you, then listens. Works on this PC only, the sound is analysed on the PC and never recorded or sent anywhere. Loud music or a noisy room can trigger it by mistake.', function () { return !!S.clap; }, function (v) { S.clap = v; try { B.clapSet(v); } catch (e) { /* */ } if (v) toast('Clap twice any time', 3000); }));
+      s4.appendChild(rangeRow('Clap and name detection strength', 1, 5, 1, function () { return S.sens || 4; }, function (v) { S.sens = v; try { B.detectSens(v); } catch (e) { /* */ } }, function (v) { return ['Low', 'Normal', 'Good', 'Strong', 'Maximum \u2014 hears from far away'][v - 1]; }));
       s4.appendChild(toggleRow('Say \u201cJarvis\u201d to wake him', 'Jarvis listens for his name while this app is open (also when only the floating ball shows). Only short, loud bursts of speech are sent for transcription, at most 10 a minute, and anything without his name is thrown away. Say \u201cJarvis, open Chrome\u201d in one go. Ctrl+Alt+Space also starts listening from anywhere.', function () { return !!S.wake; }, function (v) { S.wake = v; try { B.wakeSet(v); } catch (e) { /* */ } if (v) toast('Say \u201cJarvis\u201d any time', 3000); }));
       s4.appendChild(toggleRow('Keep listening after replies', 'Hands-free inside the app. Say \u201cstop\u201d to end.', function () { return S.handsFree; }, function (v) { S.handsFree = v; handsFreeSuspended = false; }));
       var qb = el('button', 'btn danger', 'QUIT JARVIS'); qb.style.margin = '10px 0'; qb.addEventListener('click', function () { try { B.quitApp(); } catch (e) { /* */ } }); s4.appendChild(qb);
@@ -3713,7 +3802,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.36.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.37.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3809,6 +3898,7 @@
 
   function init() {
     applyTheme(S.theme);
+    initVoiceFirst();
     Orb.start($('#orb'));
     setState('idle');
     buildChips();
@@ -3863,7 +3953,7 @@
   }
 
   if (PC) setTimeout(function () { hudSet(S.pcHud !== false); }, 1200);
-  if (PC && (S.wake || S.clap)) setTimeout(function () { try { B.clapSet(!!S.clap); B.wakeSet(!!S.wake); } catch (e) { /* */ } }, 3500);
-  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify, handleUser: handleUser };
+  if (PC && (S.wake || S.clap)) setTimeout(function () { try { B.detectSens(S.sens || 4); B.clapSet(!!S.clap); B.wakeSet(!!S.wake); } catch (e) { /* */ } }, 3500);
+  window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify, handleUser: handleUser, stateLog: function () { return stateLog; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

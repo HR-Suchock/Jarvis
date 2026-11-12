@@ -148,7 +148,8 @@
   /* ---------------------------------------------------------------- "Jarvis" wake word (opt-in).
      Nothing leaves the PC until a short, loud burst of speech (0.3-3.5 s) is heard. Only that burst is sent to the speech key you already added,
      at most 10 times a minute. If the text contains "Jarvis" Jarvis wakes up; otherwise the text is thrown away. */
-  var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis)\b[\s,.:;!?-]*/i;
+  var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis|javis|jarwis|jarbis|yarvis|charvis|darvis|tarvis|jarvish|jarviz|jarvi|jarvik)\b[\s,.:;!?-]*/i;
+  var sensF = 0.75;                                                   // detection strength: smaller = hears fainter / farther sounds (set from Settings)
   var wk = null, wakePaused = false, wakeCalls = [], wakeLang = 'en-GB', wakeOn = false, clapOn = false;
   function wakeStop() {
     if (!wk) return; var r = wk; wk = null; r.dead = true;
@@ -160,7 +161,7 @@
   function wakeStart() {
     if (wk) return; wk = { dead: false, starting: true };
     var AC = window.AudioContext || window.webkitAudioContext;
-    navigator.mediaDevices.getUserMedia({ audio: clapOn ? { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false } : { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }) /* clap detection needs the raw sound: the noise filter would smooth a clap away */.then(function (stream) {
+    navigator.mediaDevices.getUserMedia({ audio: clapOn ? { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true } : { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }) /* clap detection needs the raw sound: the noise filter would smooth a clap away */.then(function (stream) {
       if (!wk || wk.dead) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       var ctx = new AC(), src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(4096, 1, 1);
       var r = wk = { stream: stream, ctx: ctx, src: src, node: node, dead: false };
@@ -172,7 +173,7 @@
         if (wakePaused || busy || rec) { speaking = false; got = []; pre = []; return; }
         var pk = 0, v0;
         for (i = 0; i < d.length; i++) { v0 = d[i]; sum += v0 * v0; if (v0 > pk) pk = v0; else if (-v0 > pk) pk = -v0; }
-        var rms = Math.sqrt(sum / d.length), thr = Math.max(0.02, floor * 4);
+        var rms = Math.sqrt(sum / d.length), thr = Math.max(0.02 * sensF, floor * 4 * sensF + 0.002);
         if (clapOn) {                                   // two sharp, short sounds 0.15-1.0 s apart, with quiet in between; nothing is recorded or sent anywhere
           // looks at 512-sample slices (about 10 ms) so a clap is not smoothed away by the big audio buffer, and compares each slice with the room noise
           // measured a moment ago, so it works for quiet claps, far claps and noisy rooms alike
@@ -181,9 +182,9 @@
             bs = 0; bpk = 0;
             for (bi = bj; bi < bj + BL; bi++) { bv = d[bi]; bs += bv * bv; if (bv > bpk) bpk = bv; else if (-bv > bpk) bpk = -bv; }
             brms = Math.sqrt(bs / BL);
-            var base = Math.max(0.004, floor), jump = brms > Math.max(0.025, base * 7) && brms > clapPrevB * 3.5 && bpk / (brms || 1) >= 2.2;
+            var base = Math.max(0.004, floor), jump = brms > Math.max(0.025 * sensF, base * 7 * sensF) && brms > clapPrevB * 3.2 && bpk / (brms || 1) >= 2.0;
             if (jump) hit = true;
-            if (brms > Math.max(0.03, base * 5)) quietNow = false;
+            if (brms > Math.max(0.03 * sensF, base * 5 * sensF)) quietNow = false;
             clapPrevB = clapPrevB * 0.6 + brms * 0.4;
           }
           if (hit && now - clapLast > 150 && now > clapCool) {
@@ -256,6 +257,7 @@
     wakeSet: function (on) { wakeOn = !!on; wakeRefresh(); },
     quitApp: function () { P.quitApp(); },
     clapSet: function (on) { var was = clapOn; clapOn = !!on; if (was !== clapOn) wakeStop(); wakeRefresh(); },
+    detectSens: function (n) { n = Math.max(1, Math.min(5, n | 0)); sensF = [1.5, 1.2, 1.0, 0.75, 0.55][n - 1]; },
     wakePause: function (p) { wakePaused = !!p; },
     relisten: function (ms) { setTimeout(function () { emit('ballKick'); }, Math.max(0, ms | 0)); },
     voices: function () {
@@ -269,6 +271,7 @@
     listModels: function (id, type, baseUrl, key) { P.models({ id: id, type: type, baseUrl: baseUrl, key: key }); },
     search: function (id, key, cx, query) { P.search({ id: id, key: key, cx: cx, query: query }); },
     tavily: function (id, key, query) { P.tavily({ id: id, key: key, query: query }); },
+    lsearch: function (id, provider, key, query) { P.lsearch({ id: id, provider: provider, key: key, query: query }); },
     weather: function (id, key, place, units) { P.weather({ id: id, key: key, place: place, units: units }); },
     // system
     batteryInfo: function () { return batt ? J(batt) : ''; },

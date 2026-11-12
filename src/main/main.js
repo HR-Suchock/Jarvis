@@ -14,7 +14,7 @@ const { Relay } = require('./relay');
 const proto = require('./link-protocol');
 const { createBall } = require('./ball');
 // a file from the phone: pictures go to Pictures\Jarvis, everything else to Downloads\Jarvis (never overwrites; never opened automatically)
-function saveFromPhone(name, mime, data) {
+function saveFromPhone(name, mime, data) {         // data: a Buffer, or the path of a finished temporary file (big Wi-Fi transfers)
   try {
     const img = /^image\//i.test(mime);
     const base = app.getPath(img ? 'pictures' : 'downloads');
@@ -22,7 +22,7 @@ function saveFromPhone(name, mime, data) {
     const ext = path.extname(name), stem = path.basename(name, ext);
     let target = path.join(dir, name), k = 1;
     while (fs.existsSync(target) && k < 500) target = path.join(dir, stem + ' (' + (k++) + ')' + ext);
-    fs.writeFileSync(target, data, { flag: 'wx' });
+    if (typeof data === 'string') { fs.copyFileSync(data, target, fs.constants.COPYFILE_EXCL); } else fs.writeFileSync(target, data, { flag: 'wx' });
     notifyFile(path.basename(target), dir);
     return { ok: true, msg: 'Saved on the PC: ' + path.basename(target) + ' (' + (img ? 'Pictures' : 'Downloads') + '\\Jarvis).' };
   } catch (e) { return { ok: false, msg: 'Could not save the file on the PC.' }; }
@@ -132,12 +132,12 @@ async function sendFileToPhone(buf, name, mime) {
   if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 100 MB' };
   name = String(name || 'file').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(-80) || 'file';
   mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(mime || '') ? String(mime).toLowerCase() : 'application/octet-stream';
-  try {                                                // 1) same Wi-Fi: ask the phone for an address, then send directly
+  if (buf.length > FB_MAX) try {                       // 1) bigger than 5 MB: same Wi-Fi only, asked for an address, then sent directly
     const o = await relay.send('lanoffer', '', '', 15000);
     if (o && o.ok) {
       const r = await require('./lan').send(o.msg, buf, name, mime);
       if (r && r.ok) return { ok: true, msg: String(r.msg || 'sent over Wi-Fi').slice(0, 80) };
-      if (r && r.partial && buf.length > FB_MAX) return { ok: false, msg: String(r.msg || 'the Wi-Fi transfer failed').slice(0, 80) };
+      if (r && r.partial) return { ok: false, msg: String(r.msg || 'the Wi-Fi transfer failed').slice(0, 80) };
     }
   } catch (e) { /* fall through to the internet route */ }
   if (buf.length > FB_MAX) return { ok: false, msg: 'files over 5 MB go by Wi-Fi only — put the phone and this PC on the same Wi-Fi (the phone must be reachable) and try again' };
@@ -389,6 +389,7 @@ function wireIpc() {
   });
   ipcMain.on('models', (e, p) => { if (trusted(e) && p) llm.listModels(p.type, p.baseUrl, p.key).then((models) => emit('models', { id: p.id, ok: true, models }), (err) => emit('models', { id: p.id, ok: false, error: friendlyErr(err) })); });
   ipcMain.on('search', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.googleSearch(p.key, p.cx, p.query)); });
+  ipcMain.on('lsearch', (e, p) => { if (trusted(e) && p) done('tool', p.id, p.provider === 'serper' ? llm.serper(p.key, p.query) : llm.freeSearch(p.query)); });
   ipcMain.on('tavily', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.tavily(p.key, p.query)); });
   ipcMain.on('weather', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.weather(p.key, p.place, p.units)); });
 
