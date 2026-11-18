@@ -8,27 +8,32 @@ const enc = encodeURIComponent;
 
 function friendly(code, body) {
   let detail = '';
+  const t = String(body || '').trim();
+  const page = /^<|<html/i.test(t);
   try {
-    const o = JSON.parse(body);
+    const o = JSON.parse(t);
     const e = o.error;
     if (e && typeof e === 'object') detail = e.message || '';
     else if (typeof e === 'string') detail = e;
     if (!detail) detail = o.message || '';
   } catch (e) { /* not json */ }
-  if (/^\s*<(?:!doctype|html)/i.test(String(body || ''))) {
-    detail = (code === 403 || code === 401 || code === 407)
-      ? 'a firewall, VPN, antivirus or network filter on this PC is blocking the request (the service itself did not answer). Try another network, switch the VPN off, or allow Jarvis in the firewall.'
-      : 'the connection was answered by a web page instead of the service (check VPN, proxy or captive Wi-Fi login).';
-  }
-  if (!detail && body) detail = String(body).slice(0, 160);
+  detail = String(detail).replace(/\s+/g, ' ').trim();
+  if (detail.length > 140) detail = detail.slice(0, 140) + '…';
   let head;
-  if (code === 401) head = 'API key rejected (HTTP 401)';
-  else if (code === 403) head = 'Access denied (HTTP 403)';
-  else if (code === 404) head = 'Model or endpoint not found (HTTP 404)';
-  else if (code === 429) head = 'Rate limit or quota reached (HTTP 429)';
-  else if (code >= 500) head = 'The AI service is having trouble (HTTP ' + code + ')';
-  else head = 'Request failed (HTTP ' + code + ')';
-  return detail ? head + ': ' + detail : head;
+  if (code === 401) head = 'The API key was rejected. Check that it is copied completely and belongs to this provider.';
+  else if (code === 403) head = page
+    ? 'The request was blocked before it reached the service — a firewall, VPN, antivirus or network filter on this PC. Try another network, switch the VPN off, or allow Jarvis in the firewall.'
+    : 'Access was denied. The key has no permission for this, or the provider blocks this network or country.';
+  else if (code === 404 || code === 405 || code === 415) head = page
+    ? 'That address is a website, not an AI service. Check the Base URL (OpenAI-style providers usually end with /v1).'
+    : 'The model or the address was not found. Check the model name and the Base URL.';
+  else if (code === 407) head = 'A proxy on this network needs a sign-in before Jarvis can reach the service.';
+  else if (code === 408 || code === 504) head = 'The service took too long to answer. Try again in a moment.';
+  else if (code === 429) head = 'The rate limit or free quota is used up. Wait a little, or use another provider.';
+  else if (code >= 500) head = 'The service is having trouble right now. Try again later or use another provider.';
+  else head = page ? 'The server sent back a web page instead of an answer. Check the Base URL, VPN or proxy.' : 'The request was refused.';
+  if (page) detail = '';
+  return detail ? head + ' (' + detail + ')' : head;
 }
 
 
@@ -86,7 +91,7 @@ async function chat(type, baseUrl, key, model, messages, system) {
 async function gemini(base, key, model, msgs, system) {
   base = base || 'https://generativelanguage.googleapis.com';
   const body = {
-    contents: msgs.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+    contents: msgs.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: m.image ? [{ text: m.content }, { inlineData: { mimeType: m.image.mime || 'image/jpeg', data: m.image.b64 } }] : [{ text: m.content }] })),
     generationConfig: { maxOutputTokens: 8192, temperature: 0.8 },
   };
   if (system) body.systemInstruction = { parts: [{ text: system }] };
@@ -118,7 +123,7 @@ async function openai(base, key, model, msgs, system) {
   if (!base || !String(base).trim()) throw new ApiError(0, 'No base URL set for this provider.');
   const all = [];
   if (system) all.push({ role: 'system', content: system });
-  for (const m of msgs) all.push(m);
+  for (const m of msgs) all.push(m.image ? { role: m.role, content: [{ type: 'text', text: m.content }, { type: 'image_url', image_url: { url: 'data:' + (m.image.mime || 'image/jpeg') + ';base64,' + m.image.b64 } }] } : { role: m.role, content: m.content });
   const body = { model, messages: all };
   if (base.includes('api.openai.com')) body.max_completion_tokens = 1024;
   else { body.temperature = 0.8; body.max_tokens = 4096; }
@@ -134,7 +139,7 @@ async function openai(base, key, model, msgs, system) {
 
 async function anthropic(base, key, model, msgs, system) {
   base = base || 'https://api.anthropic.com';
-  const body = { model, max_tokens: 4096, messages: msgs };
+  const body = { model, max_tokens: 4096, messages: msgs.map((m) => m.image ? { role: m.role, content: [{ type: 'image', source: { type: 'base64', media_type: m.image.mime || 'image/jpeg', data: m.image.b64 } }, { type: 'text', text: m.content }] } : { role: m.role, content: m.content }) };
   if (system) body.system = system;
   const out = await http('POST', trimSlash(base) + '/v1/messages', { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body, 60000);
   const r = JSON.parse(out);
@@ -167,14 +172,6 @@ async function listModels(type, baseUrl, key) {
     for (const it of arr) ids.push(typeof it === 'string' ? it : (it.id || it.name || ''));
   }
   return ids.filter(Boolean).sort();
-}
-
-async function googleSearch(key, cx, query) {
-  if (!key || !String(key).trim() || !cx || !String(cx).trim()) throw new ApiError(0, 'Add your Google Search API key and Search Engine ID in Settings > Services.');
-  if (!query || !String(query).trim()) throw new ApiError(0, 'What should I search for?');
-  const url = 'https://www.googleapis.com/customsearch/v1?key=' + enc(key.trim()) + '&cx=' + enc(cx.trim()) + '&num=5&q=' + enc(query.trim());
-  const o = JSON.parse(await http('GET', url, {}, null, 20000));
-  return (o.items || []).slice(0, 5).map((it) => ({ title: it.title || '', snippet: String(it.snippet || '').replace(/\n/g, ' '), link: it.link || '' }));
 }
 
 async function tavily(key, query) {
@@ -229,14 +226,18 @@ async function freeSearch(query) {
   if (!res.length) throw err || new ApiError(0, 'No results found.');
   return res;
 }
-async function serper(key, query) {
-  if (!key || !String(key).trim()) throw new ApiError(0, 'Add your Serper API key in Settings > Services.');
+async function serpapi(key, query) {
+  if (!key || !String(key).trim()) throw new ApiError(0, 'Add your SerpApi key in Settings > Services.');
   if (!query || !String(query).trim()) throw new ApiError(0, 'What should I search for?');
-  const body = { q: query.trim(), num: 5 }; if (looksFresh(query)) body.tbs = 'qdr:w';
-  const o = JSON.parse(await http('POST', 'https://google.serper.dev/search', { 'X-API-KEY': key.trim() }, body, 25000));
+  const fresh = looksFresh(query);
+  const url = 'https://serpapi.com/search.json?engine=google&num=5&q=' + enc(query.trim()) + (fresh ? '&tbs=qdr:w' : '') + '&api_key=' + enc(key.trim());
+  const o = JSON.parse(await http('GET', url, {}, null, 25000));
+  if (o.error) throw new ApiError(0, /run out/i.test(o.error) ? "SerpApi: this month's free searches are used up." : 'SerpApi: ' + o.error);
   const res = [];
-  const ab = o.answerBox; if (ab) { const a = ab.answer || ab.snippet || ''; if (a) res.push({ title: 'Summary', snippet: String(a), link: '' }); }
-  for (const it of (o.organic || []).slice(0, 5)) res.push({ title: it.title || '', snippet: String(it.snippet || '').replace(/\n/g, ' '), link: it.link || '' });
+  const ab = o.answer_box; if (ab) { const a = ab.answer || ab.snippet || ab.result || ''; if (a) res.push({ title: 'Summary', snippet: String(a), link: '' }); }
+  if (fresh) for (const it of (o.news_results || []).slice(0, 3)) res.push({ title: it.title || '', snippet: String(it.snippet || it.source || ''), link: it.link || '' });
+  for (const it of (o.organic_results || [])) { if (res.length >= 6) break; res.push({ title: it.title || '', snippet: String(it.snippet || '').replace(/\n/g, ' '), link: it.link || '' }); }
+  if (!res.length) throw new ApiError(0, 'No results found.');
   return res;
 }
 
@@ -258,4 +259,4 @@ async function weather(key, place, units) {
   };
 }
 
-module.exports = { __http: http, doFetch,  chat, listModels, googleSearch, tavily, freeSearch, serper, weather, ApiError, netError };
+module.exports = { __http: http, doFetch,  chat, listModels, tavily, freeSearch, serpapi, weather, ApiError, netError };

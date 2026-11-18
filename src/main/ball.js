@@ -242,7 +242,7 @@ function createBall(ctx) {
   handleB('ball:dropfile', async (name, mime, data) => {
     const buf = data && data.byteLength !== undefined ? Buffer.from(data) : null;
     if (!buf || !buf.length) return { ok: false, msg: 'that file is empty' };
-    if (buf.length > 12 * 1000 * 1000) return { ok: false, msg: 'too big — the limit is 3 MB' };
+    if (buf.length > 100 * 1000 * 1000) return { ok: false, msg: 'too big — the limit is 100 MB' };
     if (!ctx.fileToPhone) return { ok: false, msg: 'files are not available' };
     return await ctx.fileToPhone({ name: String(name || 'file').slice(0, 120), mime: String(mime || ''), data: buf });
   });

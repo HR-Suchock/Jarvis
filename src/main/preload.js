@@ -20,10 +20,10 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   privacy: (v) => sync('privacy', !!v),
   chat: (p) => ipcRenderer.send('chat', p),
   models: (p) => ipcRenderer.send('models', p),
-  search: (p) => ipcRenderer.send('search', p),
   lsearch: (p) => ipcRenderer.send('lsearch', p),
   tavily: (p) => ipcRenderer.send('tavily', p),
   weather: (p) => ipcRenderer.send('weather', p),
+  screenShot: () => ipcRenderer.invoke('screen:shot'),
   stt: (buf, lang) => ipcRenderer.invoke('stt', buf, lang),
   link: {
     state: () => sync('link:state'),

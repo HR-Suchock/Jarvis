@@ -155,18 +155,21 @@ async function sendFileToPhone(buf, name, mime) {
   }
   return { ok: true, msg: String((last && last.msg) || 'sent').slice(0, 80) };
 }
-// a ball drop: big pictures are shrunk to a JPEG that fits; anything else must fit as it is
+// a ball drop: same rule as the phone — up to 5 MB through Firebase, bigger over the same Wi-Fi (up to 100 MB).
+// A big picture is only shrunk to a JPEG when Wi-Fi is not available.
 async function ballFileToPhone(f) {
   let { name, mime, data } = f;
-  if (/^image\//i.test(mime) && data.length > 2500000) {
+  let r = await sendFileToPhone(data, name, mime);
+  if (!r.ok && data.length > FB_MAX && /^image\//i.test(mime) && /Wi-Fi only/.test(r.msg || '')) {
     try {
       let img = nativeImage.createFromBuffer(data); const sz = img.getSize();
       if (sz.width > 2200) img = img.resize({ width: 2200 });
       data = img.toJPEG(80); mime = 'image/jpeg'; name = name.replace(/\.[^.]*$/, '') + '.jpg';
+      if (data.length > FB_MAX) return { ok: false, msg: 'no Wi-Fi link to the phone, and the picture is still over 5 MB' };
     } catch (e) { return { ok: false, msg: 'could not shrink that picture' }; }
+    r = await sendFileToPhone(data, name, mime);
   }
-  const r = await sendFileToPhone(data, name, mime);
-  return r.ok ? { ok: true, msg: 'sent — saved on your phone' } : r;
+  return r.ok ? { ok: true, msg: /Wi-Fi/i.test(r.msg || '') ? r.msg : 'sent — saved on your phone' } : r;
 }
 async function captureJpeg() {
   const disp = screen.getPrimaryDisplay();
@@ -174,6 +177,19 @@ async function captureJpeg() {
   const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
   if (!srcs.length) throw new Error('no screen found');
   return srcs[0].thumbnail.toJPEG(75);
+}
+// "what is on my screen": a picture of the whole screen for a vision AI. Jarvis' own window is hidden for a moment so it does not cover the view.
+async function screenForAi() {
+  const wasVisible = !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+  try {
+    if (wasVisible) { win.hide(); await new Promise((r) => setTimeout(r, 450)); }
+    const disp = screen.getPrimaryDisplay();
+    const w = Math.min(1920, disp.size.width), h = Math.round(w * disp.size.height / disp.size.width);
+    const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+    if (!srcs.length) return { ok: false, msg: 'I could not find a screen to look at.' };
+    return { ok: true, b64: srcs[0].thumbnail.toJPEG(72).toString('base64') };
+  } catch (e) { return { ok: false, msg: 'I could not capture the screen (' + String(e && e.message || e).slice(0, 80) + ').' }; }
+  finally { if (wasVisible && win && !win.isDestroyed()) win.show(); }
 }
 async function shotToPhone() {
   try {
@@ -388,11 +404,11 @@ function wireIpc() {
       (text) => emit('chat', { id: p.id, ok: true, text }), (err) => emit('chat', { id: p.id, ok: false, error: friendlyErr(err) }));
   });
   ipcMain.on('models', (e, p) => { if (trusted(e) && p) llm.listModels(p.type, p.baseUrl, p.key).then((models) => emit('models', { id: p.id, ok: true, models }), (err) => emit('models', { id: p.id, ok: false, error: friendlyErr(err) })); });
-  ipcMain.on('search', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.googleSearch(p.key, p.cx, p.query)); });
-  ipcMain.on('lsearch', (e, p) => { if (trusted(e) && p) done('tool', p.id, p.provider === 'serper' ? llm.serper(p.key, p.query) : llm.freeSearch(p.query)); });
+  ipcMain.on('lsearch', (e, p) => { if (trusted(e) && p) done('tool', p.id, p.provider === 'serpapi' ? llm.serpapi(p.key, p.query) : llm.freeSearch(p.query)); });
   ipcMain.on('tavily', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.tavily(p.key, p.query)); });
   ipcMain.on('weather', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.weather(p.key, p.place, p.units)); });
 
+  handle('screen:shot', () => screenForAi());
   handle('stt', (e, wav, lang) => transcribe(getSettings(), Buffer.from(wav), lang));
 
   // ---- device link

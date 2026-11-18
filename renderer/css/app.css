@@ -573,3 +573,4 @@ html.pc-app .chatbtn.on{background:rgba(var(--cyrgb),.22);color:#fff}
 html.pc-app.chat-open #app{padding-right:calc(min(440px,42vw) + 20px)}
 html.pc-app.chat-open .pchud.r{display:none}
 @media (max-width:900px){html.pc-app.chat-open #app{padding-right:22px}}
+details.man .manb h4{margin:14px 0 6px;color:var(--cy);font-size:14px;letter-spacing:.04em}

@@ -42,14 +42,12 @@
       keyUrl: 'https://platform.deepseek.com/api_keys', free: false, note: 'Low cost · small top-up needed' },
     { id: 'xai', name: 'xAI Grok', type: 'openai', base: 'https://api.x.ai/v1', model: 'grok-4',
       keyUrl: 'https://console.x.ai', free: false, note: 'Paid · tap Test & load models to pick a model' },
-    { id: 'mistral', name: 'Mistral', type: 'openai', base: 'https://api.mistral.ai/v1', model: 'mistral-small-latest',
-      keyUrl: 'https://console.mistral.ai/api-keys', free: true, note: 'Free experiment tier' },
     { id: 'openai', name: 'OpenAI', type: 'openai', base: 'https://api.openai.com/v1', model: 'gpt-4o-mini',
       keyUrl: 'https://platform.openai.com/api-keys', free: false, note: 'Paid account required' },
     { id: 'anthropic', name: 'Anthropic Claude', type: 'anthropic', base: 'https://api.anthropic.com', model: 'claude-haiku-5-5',
       keyUrl: 'https://console.anthropic.com/settings/keys', free: false, note: 'Paid account required' },
-    { id: 'custom', name: 'Custom (OpenAI-compatible)', type: 'openai', base: '', model: '',
-      keyUrl: '', free: true, note: 'Any OpenAI-style endpoint — Cerebras, Together, LM Studio…', custom: true }
+    { id: 'custom', name: 'Custom AI', type: 'openai', base: '', model: '',
+      keyUrl: '', free: true, note: 'Any AI whose API is OpenAI-style — your own tiny AI, Cerebras, Together, LM Studio… (see User Manual)', custom: true }
   ];
   function provById(id) { for (var i = 0; i < PROVIDERS.length; i++) if (PROVIDERS[i].id === id) return PROVIDERS[i]; return PROVIDERS[0]; }
 
@@ -83,10 +81,17 @@
     name: 'sir', active: 'gemini', providers: {}, fallback: true,
     speak: true, handsFree: false, wake: false, clap: false, pcHud: true, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
     about: {}, aboutOn: true, systemPrompt: '', style: 'jarvis', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
-    services: { tvKey: '', gsKey: '', gsCx: '', owKey: '', city: '', units: 'metric' }
+    services: { tvKey: '', spKey: '', owKey: '', city: '', units: 'metric' },
+    learned: [], aiOrder: [], searchOrder: ['tavily', 'serpapi', 'free'], sens: 4, learn: true
   };
   var S = loadSettings();
   try { if (window.__JARVIS_TEST) window.__li = function (x) { return localIntent(x); }; window.__pad = function () { if (!padP) buildTouchpad(); padP.open(); return 1; }; } catch (e) { /* */ }
+  function cleanOrder(a, all) {            // a saved ranking: only known ids, no repeats, anything new added at the end
+    var out = [];
+    (Array.isArray(a) ? a : []).forEach(function (x) { if (all.indexOf(x) >= 0 && out.indexOf(x) < 0) out.push(x); });
+    all.forEach(function (x) { if (out.indexOf(x) < 0) out.push(x); });
+    return out;
+  }
   function loadSettings() {
     var o = {};
     try { var raw = store.get('settings'); if (raw) o = JSON.parse(raw); } catch (e) { o = {}; }
@@ -101,6 +106,11 @@
     if (o.ttsEngine !== undefined && o.voiceMode === undefined) { s.rate = Math.min(s.rate, 1.5); }
     if (o.pitch === 0.85) s.pitch = 1.0;
     if (['en-GB', 'bn-BD', 'hi-IN'].indexOf(s.lang) < 0) s.lang = 'en-GB';
+    delete s.services.srKey; delete s.services.gsKey; delete s.services.gsCx;            // Serper and Google search were removed
+    if (s.active === 'mistral' || !PROVIDERS.some(function (p) { return p.id === s.active; })) s.active = 'gemini';
+    s.aiOrder = cleanOrder(s.aiOrder, PROVIDERS.map(function (p) { return p.id; }));
+    s.searchOrder = cleanOrder(s.searchOrder, ['tavily', 'serpapi', 'free']);
+    s.sens = Math.max(1, Math.min(5, Math.round(+s.sens || 4)));
     return s;
   }
   var THEME_RGB = { cyan: [25, 227, 255], amber: [255, 176, 64], red: [255, 90, 106], green: [61, 235, 140], purple: [176, 108, 255], mark: [255, 82, 64], friday: [232, 244, 255] };
@@ -133,17 +143,19 @@
   }
   function hasWeather() { return !!(S.services.owKey && S.services.owKey.trim()); }
   function hasTavily() { return !!(S.services.tvKey && S.services.tvKey.trim()); }
-  function hasGoogleSearch() { return !!(S.services.gsKey && S.services.gsKey.trim() && S.services.gsCx && S.services.gsCx.trim()); }
-  function hasSerper() { return !!(S.services.srKey && S.services.srKey.trim()); }
+  function hasSerpApi() { return !!(S.services.spKey && S.services.spKey.trim()); }
   function hasFree() { return S.services.freeSearch !== false; }          // the built-in no-key search (news + DuckDuckGo)
-  function hasSearch() { return hasTavily() || hasGoogleSearch() || hasSerper() || hasFree(); }
+  function hasSearch() { return hasTavily() || hasSerpApi() || hasFree(); }
+  function searchAvail(id) { return id === 'tavily' ? hasTavily() : id === 'serpapi' ? hasSerpApi() : hasFree(); }
+  function searchOrder() { var o = cleanOrder(S.searchOrder, ['tavily', 'serpapi', 'free']).filter(searchAvail); return o.length ? o : ['free']; }
   function hasKey(id) { var c = S.providers[id]; return !!(c && c.key && c.key.trim()); }
   function providerOrder() {
     var order = [];
     if (hasKey(S.active)) order.push(S.active);
     if (S.fallback || !order.length) {
-      for (var i = 0; i < PROVIDERS.length; i++) {
-        var id = PROVIDERS[i].id;
+      var rank = cleanOrder(S.aiOrder, PROVIDERS.map(function (p) { return p.id; }));          // your own ranking decides who is tried next
+      for (var i = 0; i < rank.length; i++) {
+        var id = rank[i];
         if (id !== S.active && hasKey(id)) order.push(id);
       }
     }
@@ -532,26 +544,23 @@
 
   /* ------------------------------------------------------------------ live data tools (weather / web search) */
   function runTool(name, arg, cb, force) {
-    var id = 'x' + (++reqSeq), key = 't' + id, sv = S.services, tried = '';
+    var id = 'x' + (++reqSeq), key = 't' + id, sv = S.services;
+    var chain = name === 'weather' ? ['weather'] : (force ? [force] : searchOrder()), pos = 0;       // web search: your ranking, one after the other until one answers
     function timeout() { return setTimeout(function () { if (pendingChat[key]) { delete pendingChat[key]; cb({ ok: false, error: 'The service took too long to respond.' }); } }, 30000); }
     function send(provider) {
-      var timer = timeout(); tried += provider + ',';
+      var timer = timeout();
       pendingChat[key] = function (d) {
         clearTimeout(timer);
-        if (!d.ok && !force && name !== 'weather' && provider !== 'free' && hasFree()) { send('free'); return; }          // the chosen service failed: the keyless search backs it up
+        if (!d.ok && ++pos < chain.length) { send(chain[pos]); return; }
         cb(d);
       };
       if (!B) { setTimeout(function () { window.JarvisNative.emit('tool', { id: id, ok: false, error: 'Preview mode: no phone attached.' }); }, 300); return; }
       if (name === 'weather') B.weather(id, (sv.owKey || '').trim(), arg, sv.units);
       else if (provider === 'tavily') B.tavily(id, (sv.tvKey || '').trim(), arg);
-      else if (provider === 'serper') B.lsearch(id, 'serper', (sv.srKey || '').trim(), arg);
-      else if (provider === 'free') B.lsearch(id, 'free', '', arg);
-      else B.search(id, (sv.gsKey || '').trim(), (sv.gsCx || '').trim(), arg);
+      else if (provider === 'serpapi') B.lsearch(id, 'serpapi', (sv.spKey || '').trim(), arg);
+      else B.lsearch(id, 'free', '', arg);
     }
-    if (name === 'weather') { send('weather'); return; }
-    send(force === 'tavily' || (force !== 'google' && force !== 'serper' && force !== 'free' && hasTavily()) ? 'tavily'
-      : force === 'serper' || (!force && hasSerper()) ? 'serper'
-      : force === 'google' || (!force && hasGoogleSearch()) ? 'google' : 'free');
+    send(chain[0]);
   }
   function formatWeather(w) {
     var metric = w.units !== 'imperial';
@@ -648,6 +657,39 @@
     for (var k = 0; k < len; k++) out += cs.charAt(buf[k] % cs.length);
     return out;
   }
+
+  /* ------------------------------------------------------------------ About me: Jarvis quietly learns the few important things you tell him (stored on this device, editable in Personality) */
+  var LEARN_MAX = 40;
+  function learnedGet() { return Array.isArray(S.learned) ? S.learned.filter(function (x) { return x && typeof x.f === 'string' && x.f; }) : []; }
+  function learnedAdd(label, val) {
+    val = String(val || '').replace(/[\s.,!?;:]+$/g, '').replace(/\s+/g, ' ').trim();
+    if (val.length < 2 || val.length > 70 || /\d{6,}/.test(val) || /\b(?:password|passcode|pin|otp|cvv|card|token|secret|api ?key|ssn)\b/i.test(val)) return false;
+    var f = label + ': ' + val, a = learnedGet(), key = f.toLowerCase();
+    var single = /^(?:Name|Lives in|Works as|Studies|Age|Birthday|Speaks)$/.test(label);              // one value only: a newer one replaces the old one
+    a = a.filter(function (m) { return m.f.toLowerCase() !== key && !(single && m.f.indexOf(label + ': ') === 0); });
+    a.push({ f: f, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); return true;
+  }
+  function learnFrom(text) {
+    if (S.learn === false || !text || text.length > 300 || /[?]\s*$/.test(text)) return;
+    var t = text.replace(/\s+/g, ' ').trim(), m, end = '(?=[.,!;]|\\s+(?:and|but|so|because)\\b|$)';
+    function g(re) { return (m = t.match(re)) ? m[1] : null; }
+    var v;
+    if ((v = g(new RegExp("\\bmy name is ([A-Z][\\w' -]{1,30}?)" + end)))) learnedAdd('Name', v);
+    if ((v = g(new RegExp("\\bi (?:live|stay|reside) in ([A-Za-z][\\w ,'-]{1,40}?)" + end, 'i')))) learnedAdd('Lives in', v);
+    else if ((v = g(new RegExp("\\bi(?:'m| am) from ([A-Za-z][\\w ,'-]{1,40}?)" + end, 'i')))) learnedAdd('Lives in', v);
+    if ((v = g(new RegExp("\\bi work (?:as an? |as |at |for |in )([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Works as', v);
+    else if ((v = g(new RegExp("\\bi(?:'m| am) an? ((?:[\\w-]+ ){0,2}(?:student|developer|engineer|doctor|teacher|designer|programmer|nurse|driver|artist|writer|freelancer|manager|businessman|entrepreneur|musician|farmer))" + end, 'i')))) learnedAdd('Works as', v);
+    if ((v = g(new RegExp("\\bi (?:study|am studying|'m studying) ([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Studies', v);
+    if ((v = g(/\bi(?:'m| am) (\d{1,2}) years? old\b/i))) learnedAdd('Age', v);
+    if ((v = g(new RegExp("\\bmy birthday is ([\\w ,/-]{3,25}?)" + end, 'i')))) learnedAdd('Birthday', v);
+    if ((v = g(new RegExp("\\bi speak ([A-Za-z ,&]{3,40}?)" + end, 'i')))) learnedAdd('Speaks', v);
+    if ((v = g(new RegExp("\\bi (?:really )?(?:like|love|enjoy|prefer) ((?!you\\b|it\\b|that\\b|this\\b|when\\b)[\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Likes', v);
+    if ((v = g(new RegExp("\\bi (?:really )?(?:hate|dislike|can't stand|cannot stand) ((?!you\\b|it\\b|that\\b|this\\b)[\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Dislikes', v);
+    if ((m = t.match(new RegExp("\\bmy (favou?rite [a-z ]{3,20}?) is ([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd(m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase().replace('favorite', 'favourite'), m[2]);
+    if ((m = t.match(new RegExp("\\bmy (wife|husband|brother|sister|mother|mom|father|dad|son|daughter|girlfriend|boyfriend|best friend|friend|boss|teacher)(?:'s name)? (?:is|are) (?:called |named )?([A-Z][\\w' -]{1,30}?)" + end)))) learnedAdd('My ' + m[1], m[2]);
+    if ((v = g(new RegExp("\\bi have an? ((?:[a-z]+ )?(?:dog|cat|car|bike|motorcycle|brother|sister|son|daughter|laptop|business|shop|channel|startup|project)(?: called [A-Z]\\w+| named [A-Z]\\w+)?)" + end, 'i')))) learnedAdd('Has', v);
+  }
+  function learnedText() { return S.learn === false ? '' : learnedGet().map(function (m) { return m.f; }).join('; ').slice(0, 900); }
 
   /* ------------------------------------------------------------------ memory: facts the user asked Jarvis to remember (stored encrypted on the phone) */
   function memGet() { try { var a = JSON.parse(store.get('mem') || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && typeof x.f === 'string'; }) : []; } catch (e) { return []; } }
@@ -1535,11 +1577,11 @@
     if ((m = t.match(/^schedule (?:a )?(?:meeting|call) with (.{1,40}?) (?:for |on |at )?((?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|on|at|\d).*)$/))) { var e3 = eventWhen(m[2]); return act('calins', 'Meeting with ' + cap1(m[1]), e3.ms ? String(e3.ms) : ''); }
     if (/^(?:cancel|delete|remove) (?:my |the )?(?:meeting|event|appointment)\b/.test(t)) return act('open', 'calendar');
     // ---- on-screen awareness (reads the open screen through the Accessibility service, then the AI answers)
-    if (/^what(?:'s| is) on (?:my |the )?screen$|^(?:read|describe) (?:my |the )?screen$/.test(t)) return { kind: 'screen', task: 'Describe briefly what is on the screen.' };
+    if (/^(?:what(?:'s| is| do you see) (?:on|in) (?:my |the |this )?(?:phone |pc |computer |laptop )?(?:screen|display)|what(?:'s| is) on (?:my |the )?(?:phone|pc|computer|laptop)|what do you see(?: on (?:my |the )?(?:screen|display))?|what am i (?:looking at|seeing)(?: on (?:my |the )?screen)?|(?:can|could) you (?:see|read|look at) (?:my |the |this )?(?:screen|display)|(?:look at|check|see|scan) (?:my |the |this )?(?:screen|display)|(?:read|describe|explain|analy[sz]e) (?:to me )?(?:my |the |this )?(?:phone |pc |computer )?(?:screen|display)(?: (?:out |to me|aloud))?)$/.test(t)) return { kind: 'screen', task: 'Describe briefly what is on the screen and explain it.' };
     if (/^(?:summari[sz]e|sum up) (?:this|the|that)(?: article| page| text| screen| post| message| email)?(?: on (?:my |the )?screen)?$/.test(t)) return { kind: 'screen', task: 'Summarize the main text on the screen in a few short sentences.' };
     if ((m = t.match(/^translate (?:this|the|that)(?: text| page| screen| message)?(?: on (?:my |the )?screen)?(?: (?:to|into) ([a-z ]{3,20}))?$/))) return { kind: 'screen', task: 'Translate the main text on the screen into ' + (m[1] || 'English') + '. Output only the translation.' };
     if (/^what(?:'s| is) (?:this |the )?(?:product|item|object|thing|brand|place|person) (?:in |on )?(?:this |the )?(?:photo|picture|image|screen)(?: on (?:my |the )?screen)?$/.test(t))
-      return say('I can only read text on the screen, ' + addrName() + ', not pictures. Describe what you see, or say “what is on my screen” and I will read the labels around it.');
+      return PC ? { kind: 'screen', task: 'Identify and explain the main thing in the picture or photo on the screen.' } : say('On the phone I read the text on the screen, ' + addrName() + ', not pictures. On the PC I can look at pictures. Say “what is on my screen” and I will read the labels around it.');
     // ---- diagnostics
     if (/^how do i (?:enable|turn on|unlock|open|get) developer (?:options|mode)$|^(?:enable|open|turn on) developer options$/.test(t)) return say('Open Settings, About phone, and tap Build number seven times. Then Developer options appears in Settings, System. Say “open developer settings” and I will take you there once it is on.');
     if (/^(?:open|show) developer (?:options|settings)$/.test(t)) return act('settings', 'developer');
@@ -2077,7 +2119,7 @@
   }
   /* "what's on my screen": read the open screen (Accessibility), then let the AI do the task with that text */
   function screenAsk(li) {
-    if (PC) { respond('Reading the screen works on the phone, ' + addrName() + '. Ask me on the phone, or say \u201con my phone, what is on my screen\u201d.'); return; }
+    if (PC) { pcScreenAsk(li); return; }
     var st = doAction('screenlater');
     if (!st.ok) { addMsg('err', st.msg); history.push({ role: 'assistant', content: st.msg }); saveHistory(); setState('idle'); speakText(st.msg); return; }
     var say = 'Switch to the screen you want me to read, ' + addrName() + '. I will look in a few seconds, then come back and explain it.';
@@ -2095,6 +2137,19 @@
       setState('thinking'); var typing = addTyping(); failLog = [];
       tryProvider(order, 0, typing, 'Text currently visible on the user\'s phone screen (read from the screen, so it may include menu and button labels):\n"""\n' + String(m).slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
     })();
+  }
+  /* PC: Jarvis takes a picture of the whole screen and shows it to an AI that can see pictures (Gemini, OpenAI, Claude, Grok or a Custom AI that supports images) */
+  var visionShot = null, VISION_IDS = ['gemini', 'anthropic', 'openai', 'xai', 'custom'];
+  function pcScreenAsk(li) {
+    if (!B || !B.screenShot) { respond('Looking at the screen needs the latest PC version of Jarvis, ' + addrName() + '.'); return; }
+    var order = providerOrder().filter(function (p) { return VISION_IDS.indexOf(p.id) >= 0; });
+    if (!order.length) { respond('I need an AI that can see pictures to look at the screen, ' + addrName() + '. Add a Google Gemini key (free) under Settings \u203a Neural Link \u2014 OpenAI, Claude and Grok also work.'); return; }
+    setState('thinking'); var typing = addTyping();
+    Promise.resolve(B.screenShot()).then(function (r) {
+      if (!r || !r.ok || !r.b64) { typing.remove(); respond((r && r.msg) || 'I could not capture the screen, ' + addrName() + '.'); return; }
+      visionShot = { mime: 'image/jpeg', b64: r.b64 }; failLog = [];
+      tryProvider(order, 0, typing, 'A picture of the user\'s whole PC screen is attached to this message (it may include Jarvis\' own window; ignore it). Look at it carefully.\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
+    }, function () { typing.remove(); respond('I could not capture the screen, ' + addrName() + '.'); });
   }
   function greetAndListen() {          // used by the clap and by the spoken name: greets like at start-up, then listens
     handsFreeSuspended = false; emptyListens = 0; lastFromVoice = true;
@@ -2654,7 +2709,8 @@
     if (S.aboutOn === false) return '';
     var lab = { fullName: 'Full name', work: 'Work or study', city: 'Lives in', langs: 'Languages', interests: 'Interests', goals: 'Current goals', likes: 'Prefers answers', notes: 'Also' }, out = [];
     ABOUT_F.forEach(function (f) { var v = String((S.about || {})[f[0]] || '').replace(/\s+/g, ' ').trim().slice(0, 300); if (v) out.push(lab[f[0]] + ': ' + v); });
-    return out.length ? '\nAbout the user (their own profile; use it to personalise answers when relevant, never recite it unprompted):\n' + out.join('\n') : '';
+    var ln = learnedText(); if (ln) out.push('Learned from our chats (important details only): ' + ln);
+    return out.length ? '\nAbout the user (their own profile; use it only when the user asks about themselves or when it clearly helps the answer, never recite it unprompted):\n' + out.join('\n') : '';
   }
   function buildSystem() {
     var p = (S.systemPrompt && S.systemPrompt.trim()) ? S.systemPrompt : DEFAULT_PROMPT;
@@ -2678,6 +2734,7 @@
     var out = h.map(function (m) { return { role: m.role, content: m.content }; });
     if (extra && out.length && out[out.length - 1].role === 'user') {
       out[out.length - 1].content += '\n\n[Live data from tools - use it to answer, keep the reply short]\n' + extra;
+      if (visionShot) out[out.length - 1].image = visionShot;
     }
     return out;
   }
@@ -2765,7 +2822,7 @@
           runTool('websearch', rq, function (td) { if (td.ok && td.data && td.data.length) tryProvider(order, i, typing, searchContext(rq, td.data)); else { searchRetried = true; tryProvider(order, i, typing, undefined); } });
           return;
         }
-        typing.remove();
+        typing.remove(); visionShot = null;
         var parsed = runTags(d.text, !!extra);
         var shown = parsed.text || (parsed.results.length ? 'Done.' : 'I could not retrieve that information.');
         history.push({ role: 'assistant', content: shown });
@@ -2788,7 +2845,7 @@
         tryProvider(order, i + 1, typing, extra);
         return;
       }
-      typing.remove();
+      typing.remove(); visionShot = null;
       history.pop();
       var lines = failLog.map(function (f) { return f.name + ': ' + f.msg; }), hint = '';
       for (var q = 0; q < failLog.length && !hint; q++) hint = errHint(failLog[q].msg);
@@ -2806,9 +2863,10 @@
     if (PC) hudTask(text);
     text = (text || '').trim();
     if (!text) return;
-    lastFromVoice = !!fromVoice;
+    lastFromVoice = !!fromVoice; visionShot = null;
     stopSpeakingNow();
     addMsg('u', text);
+    try { learnFrom(text); } catch (e) { /* learning must never break a command */ }
     history.push({ role: 'user', content: text });
     trimHistory();
     saveHistory(); logAdd('u', text);
@@ -3039,10 +3097,12 @@
   window.__onBack = function () { if (closePanels()) return true; if (settingsOpen) { settingsBack(); return true; } return false; };
 
   /* settings as a list: each group opens on its own page */
-  var settingsPage = '', showSettingsPage = null;
+  var settingsPage = '', showSettingsPage = null, rankRedraw = [];
+  function promote(id) { var o = cleanOrder(S.aiOrder, PROVIDERS.map(function (p) { return p.id; })); o.splice(o.indexOf(id), 1); o.unshift(id); S.aiOrder = o; }
   var ICONS = {
     'SETUP CHECK': '<path d="M5 12l5 5 9-10"/>',
     'NEURAL LINK': '<circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3"/>',
+    'FALLBACK ORDER': '<path d="M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     'SERVICES': '<path d="M7 18a4 4 0 010-8 5 5 0 019.5-1A4 4 0 0117 18z"/>',
     'VOICE': '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>',
     'PERSONALITY': '<circle cx="12" cy="12" r="9"/><path d="M8 14c1 2 7 2 8 0M9 9.5h.01M15 9.5h.01"/>',
@@ -3061,6 +3121,7 @@
     ['USER MANUAL', 'Step-by-step setup guide for beginners'],
     ['NEURAL LINK', 'AI providers and API keys'],
     ['SERVICES', 'Weather and web search keys'],
+    ['FALLBACK ORDER', 'Which AI and which web search is tried next if one fails'],
     ['VOICE', 'Jarvis voice, speed and language'],
     ['PERSONALITY', 'Your name and how Jarvis behaves'],
     [PC ? 'PC ACCESS' : 'PHONE ACCESS', PC ? 'Voice input on this PC' : 'Microphone, typing control, floating ball'],
@@ -3096,6 +3157,7 @@
       menu.style.display = settingsPage ? 'none' : '';
       if (foot) foot.style.display = settingsPage ? 'none' : '';
       if (title) title.textContent = settingsPage || 'SYSTEM CONFIG';
+      if (settingsPage === 'FALLBACK ORDER') rankRedraw.forEach(function (f) { try { f(); } catch (e) { /* */ } });
       body.scrollTop = 0;
     };
     showSettingsPage(settingsPage);
@@ -3155,7 +3217,7 @@
     if (p.custom) {
       base = el('input'); base.type = 'url'; base.value = c.base || ''; base.placeholder = 'https://api.example.com/v1';
       base.autocapitalize = 'off'; base.spellcheck = false;
-      body.appendChild(field('BASE URL (ends with /v1)', base));
+      body.appendChild(field('BASE URL (from the API docs — usually ends with /v1, without /chat/completions)', base));
     }
     var line = el('div', 'msgline');
     var row = el('div', 'row');
@@ -3180,13 +3242,13 @@
     use.style.display = S.active === p.id ? 'none' : '';
 
     head.addEventListener('click', function () { card.classList.toggle('open'); });
-    radio.addEventListener('click', function (e) { e.stopPropagation(); S.active = p.id; save(); refreshActive(); haptic(); });
-    use.addEventListener('click', function () { S.active = p.id; save(); refreshActive(); toast(p.name + ' is now active'); haptic(); });
+    radio.addEventListener('click', function (e) { e.stopPropagation(); S.active = p.id; promote(p.id); save(); refreshActive(); haptic(); });
+    use.addEventListener('click', function () { S.active = p.id; promote(p.id); save(); refreshActive(); toast(p.name + ' is now active'); haptic(); });
     key.addEventListener('input', function () {
       c.key = key.value.trim();
       dot.classList.toggle('on', !!c.key);
       var activeHas = hasKey(S.active) && S.active !== p.id;
-      if (c.key && !activeHas) { S.active = p.id; refreshActive(); }
+      if (c.key && !activeHas) { S.active = p.id; promote(p.id); refreshActive(); }
       save();
     });
     key.addEventListener('focus', function () { key.type = 'text'; });
@@ -3440,6 +3502,7 @@
   }
 
   function renderSettings() {
+    rankRedraw = [];
     var body = $('#set-body');
     body.innerHTML = '';
 
@@ -3462,23 +3525,15 @@
         if (!hasTavily()) { done(false, 'Enter the API key first.'); return; }
         runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error); }, 'tavily');
       }));
-    sS.appendChild(serviceCard('Web Search · Serper', 'Google results · 2,500 free searches, no card',
-      function () { return hasSerper(); },
-      [{ key: 'srKey', label: 'API KEY', secret: true, ph: 'Serper API key' }],
-      [['GET FREE KEY', 'https://serper.dev/']],
+    sS.appendChild(serviceCard('Web Search · SerpApi', 'Real Google results · 250 free searches a month, no card',
+      function () { return hasSerpApi(); },
+      [{ key: 'spKey', label: 'API KEY', secret: true, ph: 'SerpApi private API key' }],
+      [['GET FREE KEY', 'https://serpapi.com/users/sign_up']],
       function (done) {
-        if (!hasSerper()) { done(false, 'Enter the API key first.'); return; }
-        runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error); }, 'serper');
+        if (!hasSerpApi()) { done(false, 'Enter the API key first.'); return; }
+        runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error); }, 'serpapi');
       }));
-    sS.appendChild(toggleRow('Built-in free web search (no key)', 'News headlines + DuckDuckGo. Used when no key is set, and as a back-up when a key fails', function () { return hasFree(); }, function (v) { S.services.freeSearch = v; }));
-    sS.appendChild(serviceCard('Web Search · Google', 'Only works for existing Custom Search customers',
-      function () { return hasGoogleSearch(); },
-      [{ key: 'gsKey', label: 'API KEY', secret: true, ph: 'Google API key' }, { key: 'gsCx', label: 'SEARCH ENGINE ID (cx)', ph: 'e.g. 0123abc…' }],
-      [['GET API KEY', 'https://developers.google.com/custom-search/v1/overview'], ['SEARCH ENGINE', 'https://programmablesearchengine.google.com/']],
-      function (done) {
-        if (!hasGoogleSearch()) { done(false, 'Enter both the API key and the Search Engine ID.'); return; }
-        runTool('websearch', 'test', function (d) { done(d.ok, d.ok ? 'Working — ' + d.data.length + ' results returned.' : d.error + (/403/.test(d.error || '') ? ' Google has closed this API to new customers — use Tavily instead.' : '')); }, 'google');
-      }));
+    sS.appendChild(toggleRow('Built-in free web search (no key)', 'News headlines + DuckDuckGo, no account needed. Put it first or last under FALLBACK ORDER', function () { return hasFree(); }, function (v) { S.services.freeSearch = v; }));
     sS.appendChild(serviceCard('OpenWeather', 'Current weather by voice',
       function () { return hasWeather(); },
       [{ key: 'owKey', label: 'API KEY', secret: true, ph: 'OpenWeather API key' },
@@ -3490,6 +3545,45 @@
         runTool('weather', S.services.city || 'London', function (d) { done(d.ok, d.ok ? formatWeather(d.data) : d.error); });
       }));
     body.appendChild(sS);
+
+    // --- fallback order (rank which AI / web search is tried next)
+    var sF = section('FALLBACK ORDER', 'Rank the services. Jarvis uses number 1 first; if it fails (down, no quota, wrong key) he tries number 2, then 3 and so on. Only services that are set up are used. Use the arrows to move one up or down.');
+    function rankBox(title, sub, ids, nameOf, readyOf, getOrder, setOrder) {
+      var wrap = el('div', 'card'); wrap.style.padding = '12px 14px';
+      wrap.appendChild(el('div', 'card-n', '<b>' + esc(title) + '</b><small>' + esc(sub) + '</small>'));
+      var list = el('div'); list.style.marginTop = '8px'; wrap.appendChild(list);
+      function draw() {
+        list.innerHTML = '';
+        var order = getOrder(), n = 0;
+        order.forEach(function (id, i) {
+          var ready = readyOf(id); if (ready) n++;
+          var r = el('div', 'rank-row'); r.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.07)';
+          r.appendChild(el('span', '', '<b style="color:var(--accent,#19e3ff);min-width:22px;display:inline-block">' + (i + 1) + '</b>'));
+          var nm = el('div', '', '<b style="font-weight:600">' + esc(nameOf(id)) + '</b><small style="display:block;color:var(--mute)">' + (ready ? 'ready' : 'not set up — skipped') + '</small>');
+          nm.style.flex = '1'; if (!ready) nm.style.opacity = '.55'; r.appendChild(nm);
+          [['▲', -1], ['▼', 1]].forEach(function (d) {
+            var b = el('button', 'btn', d[0]); b.style.cssText = 'padding:4px 11px;min-width:0';
+            var j = i + d[1]; if (j < 0 || j >= order.length) b.disabled = true, b.style.opacity = '.3';
+            b.addEventListener('click', function () { var o = getOrder().slice(); var t = o[i]; o[i] = o[j]; o[j] = t; setOrder(o); save(); haptic(); draw(); });
+            r.appendChild(b);
+          });
+          list.appendChild(r);
+        });
+      }
+      draw(); rankRedraw.push(draw); return wrap;
+    }
+    sF.appendChild(rankBox('AI providers (Neural Link)', 'Number 1 becomes the active AI. The rest follow in this order when "Auto-switch" is on.',
+      PROVIDERS.map(function (p) { return p.id; }), function (id) { return provById(id).name; }, hasKey,
+      function () { return cleanOrder(S.aiOrder, PROVIDERS.map(function (p) { return p.id; })); },
+      function (o) {
+        S.aiOrder = o;
+        var first = o.filter(hasKey)[0]; if (first) { S.active = first; }
+        updateProviderChip();
+      }));
+    sF.appendChild(rankBox('Web search', 'Add the built-in free search at number 1 if you want answers from it first.',
+      ['tavily', 'serpapi', 'free'], function (id) { return id === 'tavily' ? 'Tavily' : id === 'serpapi' ? 'SerpApi (Google)' : 'Built-in free web search'; }, searchAvail,
+      function () { return cleanOrder(S.searchOrder, ['tavily', 'serpapi', 'free']); }, function (o) { S.searchOrder = o; }));
+    body.appendChild(sF);
 
     // --- appearance + conversations
     var sa = section('APPEARANCE', 'Pick the colour of the whole Jarvis interface.');
@@ -3594,6 +3688,27 @@
     });
     s3.appendChild(el('div', 'dl-note', 'ABOUT ME: tell Jarvis who you are. Everything is optional and stays encrypted on this device.'));
     s3.appendChild(ab);
+    s3.appendChild(toggleRow('Learn about me from our chats', 'Jarvis notes only the important facts you tell him (name, city, work, likes, family names…), never passwords, numbers or whole conversations. Stored on this device only.', function () { return S.learn !== false; }, function (v) { S.learn = v; }));
+    var lc = el('div', 'card'); lc.style.padding = '10px 14px';
+    lc.appendChild(el('div', 'card-n', '<b>What Jarvis has learned</b><small>Edit any line, delete it, or add your own. Jarvis uses these only when you ask about yourself or when they clearly help.</small>'));
+    var ll = el('div'); ll.style.marginTop = '8px'; lc.appendChild(ll);
+    function drawLearned() {
+      ll.innerHTML = ''; var all = learnedGet();
+      if (!all.length) ll.appendChild(el('div', 'empty-note', 'Nothing yet. Say, for example, “my name is Suchock” or “I live in Dhaka” and it appears here.'));
+      all.forEach(function (m, idx) {
+        var r = el('div'); r.style.cssText = 'display:flex;gap:6px;align-items:center;margin:5px 0';
+        var i2 = el('input'); i2.type = 'text'; i2.value = m.f; i2.maxLength = 120; i2.spellcheck = false; i2.style.flex = '1';
+        i2.addEventListener('change', function () { var a = learnedGet(); var v = i2.value.replace(/\s+/g, ' ').trim().slice(0, 120); if (v) a[idx].f = v; else a.splice(idx, 1); S.learned = a; save(); drawLearned(); });
+        var x = el('button', 'btn', '✕'); x.style.cssText = 'padding:6px 12px;min-width:0'; x.setAttribute('aria-label', 'Delete');
+        x.addEventListener('click', function () { var a = learnedGet(); a.splice(idx, 1); S.learned = a; save(); haptic(); drawLearned(); });
+        r.appendChild(i2); r.appendChild(x); ll.appendChild(r);
+      });
+      var add = el('input'); add.type = 'text'; add.placeholder = 'Add a detail, e.g. Likes: cricket  (press Enter)'; add.maxLength = 120; add.style.cssText = 'width:100%;margin-top:6px;box-sizing:border-box';
+      add.addEventListener('keydown', function (e) { if (e.key !== 'Enter') return; var v = add.value.replace(/\s+/g, ' ').trim().slice(0, 120); if (!v) return; var a = learnedGet(); a.push({ f: v, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); drawLearned(); });
+      ll.appendChild(add);
+      if (all.length) { var cl = el('button', 'btn danger', 'CLEAR EVERYTHING LEARNED'); cl.style.marginTop = '10px'; cl.addEventListener('click', function () { if (!cl.getAttribute('data-sure')) { cl.setAttribute('data-sure', '1'); cl.textContent = 'TAP AGAIN TO CONFIRM'; return; } S.learned = []; save(); drawLearned(); }); ll.appendChild(cl); }
+    }
+    drawLearned(); s3.appendChild(lc);
     s3.appendChild(toggleRow('Share my profile with the AI', 'The details above are sent with your messages to the AI service you chose, so answers fit you. Switch off to keep them on this device only.', function () { return S.aboutOn !== false; }, function (v) { S.aboutOn = v; }));
     s3.appendChild(toggleRow('Emotions', 'Jarvis shows feelings: his orb colour and voice change with the mood of each reply', function () { return S.emotions !== false; }, function (v) { S.emotions = v; }));
     var pr = el('textarea'); pr.value = S.systemPrompt && S.systemPrompt.trim() ? S.systemPrompt : DEFAULT_PROMPT; pr.spellcheck = false;
@@ -3631,7 +3746,7 @@
       function () { try { var st = JSON.parse((B && B.callHelpState && B.callHelpState()) || '{}'); return !!(st.on && st.phone); } catch (e) { return false; } },
       function (v) { try { if (B && B.setCallHelp) { B.setCallHelp(v); if (v) toast('Allow the phone permissions that Android asks for', 4000); } else toast('Only on the phone'); } catch (e) { /* ignore */ } }));
     var bb = el('div', 'row'); bb.style.margin = '0 0 10px';
-    var g4 = el('button', 'btn pri', 'TOGGLE FLOATING BALL');
+    var g4 = el('button', 'btn pri', 'FLOATING BALL ON / OFF');
     g4.addEventListener('click', function () {
       if (!B) { toast('Only on the phone'); return; }
       var on = !!perms().ball, r = B.setBall(!on);
@@ -3688,10 +3803,20 @@
     var sm = section('USER MANUAL', 'A simple guide to set up and use Jarvis. Tap a step to open it.');
     var MAN = [
       ['1 · First start', '<p>Open Jarvis and tap the screen once after the boot animation. When Android asks for permissions, tap <b>Allow</b> for the <b>microphone</b> (so Jarvis can hear you) and, if you want Jarvis to call people, <b>phone</b> and <b>contacts</b>. You can change these later in <b>Settings › Phone Access</b>.</p>'],
-      ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › Neural Link</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next automatically.</p>'],
+      ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › Neural Link</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next. Choose the order yourself in <b>Settings › Fallback Order</b> (number 1 is used first).</p>' +
+        '<h4>Custom AI — add any AI that is not in the list</h4>' +
+        '<p>Almost every AI service offers an “OpenAI-style” API. The <b>Custom AI</b> card in Neural Link works with all of them, so you are never limited to the names in the list. You need three things from that service: the <b>Base URL</b>, a <b>key</b> and a <b>model name</b>.</p>' +
+        '<ol><li><b>Find the Base URL.</b> Open the service’s website and look for <i>API docs</i>, <i>Quickstart</i> or <i>OpenAI compatibility</i>. They show an example with <code>base_url</code> (or “endpoint”). Copy that address — it is usually the part <i>before</i> <code>/chat/completions</code> and often ends with <code>/v1</code>. Jarvis adds <code>/chat/completions</code> by itself, so do not type it.</li>' +
+        '<li><b>Get a key</b> from the service’s dashboard (API keys page) and paste it in the key box.</li>' +
+        '<li><b>Type the model name</b> exactly as the service shows it (for example <code>llama-3.3-70b-versatile</code>). Tap <b>TEST &amp; LOAD MODELS</b> — if the address is right, Jarvis lists the models and you can pick one.</li>' +
+        '<li>Tap <b>USE THIS</b>. A green dot means it works.</li></ol>' +
+        '<p><b>Base URLs that work (examples):</b></p><ul><li>Groq: <code>https://api.groq.com/openai/v1</code> (not console.groq.com — that is only the website)</li><li>Cerebras: <code>https://api.cerebras.ai/v1</code></li><li>Together AI: <code>https://api.together.xyz/v1</code></li><li>Fireworks: <code>https://api.fireworks.ai/inference/v1</code></li><li>NVIDIA NIM: <code>https://integrate.api.nvidia.com/v1</code></li><li>Mistral: <code>https://api.mistral.ai/v1</code></li><li>LM Studio on your PC: <code>http://YOUR-PC-IP:1234/v1</code> · Ollama: <code>http://YOUR-PC-IP:11434/v1</code> (the phone and PC must be on the same Wi-Fi; any key text works)</li></ul>' +
+        '<p><b>Your own tiny AI:</b> if your AI runs on a server (your own computer, a Cloudflare Worker, Render, etc.) and answers at <code>…/v1/chat/completions</code> in the OpenAI format, put its address up to <code>/v1</code> as the Base URL, any text or your own token as the key, and its model name. Test it first in a browser or with curl.</p>' +
+        '<p><b>If it fails:</b> “That address is a website, not an AI service” means the Base URL is the website address — look again in the API docs. “Not found” means a wrong model name or Base URL. “Key rejected” means the key is wrong or has spaces. Services that do not offer the OpenAI style (for example Anthropic and Gemini) already have their own cards in the list.</p>' +
+        '<h4>Web search keys</h4><p>Under <b>Settings › Services</b> you can add <b>Tavily</b> and <b>SerpApi</b> (both free, no card). The <b>built-in free web search</b> needs no key. In <b>Fallback Order</b> rank them — put the built-in search first if you want answers from it first.</p>'],
       ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p><p>For news, prices or anything recent, Jarvis searches the web by himself when a Tavily or Google search key is added.</p><p><b>Skills:</b> “add milk to my shopping list”, “show my shopping list”, “generate a password”, “start a focus session”, “choose tea or coffee”, “spell necessary”. See <b>All commands</b> for more.</p><p><b>Phone controls:</b> brightness, Do Not Disturb, camera, screenshot, alarms, Spotify, WhatsApp and email drafts, calendar events and “what is on my screen”. Android only lets you flip Wi-Fi, Bluetooth, airplane mode and similar yourself, so Jarvis opens the right switch.</p>'],
       ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
-      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it. Turn it off in Settings › Appearance, from the tray icon, or by right-clicking the ball. It follows your colour theme.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>TOGGLE FLOATING BALL</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
+      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it. Turn it off in Settings › Appearance, from the tray icon, or by right-clicking the ball. It follows your colour theme.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>Floating ball on / off</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
       ['7 · Quick tile', '<ul><li><b>Quick tile:</b> pull down the notification shade, tap the pencil or edit icon and drag the <b>Jarvis</b> tile into your quick settings. Tap it to start talking.</li></ul>'],
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
@@ -3704,7 +3829,7 @@
             ['15 · Wake the PC', '<p>Switch your PC on from this phone, even when it is off or asleep.</p><ol><li>Open <b>Settings › Device Link › WAKE THE PC</b> while the PC is on and linked.</li><li>Tap <b>LEARN FROM PC</b>, then <b>SAVE</b> (or type the address yourself).</li><li>Tap <b>SET UP ON PC</b> once, so the PC network card accepts the wake signal.</li><li>Later, tap <b>WAKE NOW</b> or say “wake my PC”. Jarvis tells you when the PC is awake.</li></ol><p>The phone must be on the <b>same Wi-Fi</b> as the PC, and <b>Wake-on-LAN</b> must be on in the PC’s BIOS. A PC that is fully powered off on battery, or a laptop with the lid closed, may not wake.</p>'],
       ['16 · Calendar and dashboard', '<p>Say <b>“dashboard”</b> for one screen with the time, weather, your next events, reminders, notes and battery.</p><ul><li>Say “what is on my calendar”, “calendar tomorrow” or “next meeting”.</li><li>The first time, tap <b>ALLOW CALENDAR</b> on the dashboard. Jarvis only <b>reads</b> titles, times and places. Nothing is changed or uploaded.</li><li>On the PC the dashboard shows your phone calendar through the private link.</li></ul>'],
       ['17 · PC voice and “Jarvis”', '<ul><li>On the PC, voice comes first: Jarvis keeps listening after each reply (say “stop” to end).</li><li><b>Ctrl+Alt+Space</b> starts listening from anywhere.</li><li>Switch on <b>Say “Jarvis” to wake him</b> in Settings › PC Access. Say “Jarvis” alone, or “Jarvis, open Chrome” in one go.</li><li>Only short bursts of speech are sent for transcription (at most 10 a minute). Anything without his name is discarded. Switch it off any time.</li><li><b>Clap twice</b> (Settings › PC Access) wakes him; <b>Quit Jarvis</b> is in the tray menu and Settings.</li></ul><p><b>Follow-ups:</b> after “play a song on my PC”, short commands such as pause, next, volume up or “play another song” keep going to the PC (and the same way for the phone) for 15 minutes. Say “back to this phone” to stop. New songs play in the same YouTube tab Jarvis opened and never touch your other tabs.</p><p><b>PC voice:</b> “rewind 10 seconds”, “forward 10 seconds”, “full screen”, “click Skip”, “switch to Chrome”, “close window”, “press Ctrl Shift T”.</p>'],
-      ['18 · If something does not work', '<ul><li><b>“Invalid key” or 401:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
+      ['18 · If something does not work', '<ul><li><b>“Key rejected”:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
     ];
     MAN.forEach(function (m, i) {
       var d = el('details', 'man'); if (i === 0) d.open = true;
@@ -3802,7 +3927,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.37.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.38.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -3953,7 +4078,7 @@
   }
 
   if (PC) setTimeout(function () { hudSet(S.pcHud !== false); }, 1200);
-  if (PC && (S.wake || S.clap)) setTimeout(function () { try { B.detectSens(S.sens || 4); B.clapSet(!!S.clap); B.wakeSet(!!S.wake); } catch (e) { /* */ } }, 3500);
+  if (PC) setTimeout(function () { try { B.detectSens(S.sens || 4); if (S.wake || S.clap) { B.clapSet(!!S.clap); B.wakeSet(!!S.wake); } } catch (e) { /* */ } }, 3500);
   window.__jarvisTest = { setState: setState, scriptLang: scriptLang, speakOpts: speakOpts, S: S, localIntent: localIntent, norm: norm, runTags: runTags, buildSystem: buildSystem, applyMood: applyMood, personaText: personaText, linkify: linkify, handleUser: handleUser, stateLog: function () { return stateLog; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
