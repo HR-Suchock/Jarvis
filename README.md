@@ -5,7 +5,7 @@ Electron app that runs the same Jarvis UI as the phone app, in a normal resizabl
 ## Get the .exe without a strong PC (GitHub builds it)
 1. Create a repository on github.com and upload everything in this folder.
 2. **Actions -> Build Jarvis for Windows -> Run workflow** (about 5 minutes).
-3. Download **Jarvis-Windows** from the run: `Jarvis-Setup-1.37.0.exe` — the only file; run it to install Jarvis (it has its own install wizard).
+3. Download **Jarvis-Windows** from the run: `Jarvis-Setup-1.38.0.exe` — the only file; run it to install Jarvis (it has its own install wizard).
 
 ## Or build locally (Windows, Node.js 20+)
 ```
@@ -17,3 +17,6 @@ npm test
 
 The shared UI lives in `assets/` (a copy from the phone project). If you change the phone UI, copy its `assets/` folder over this one.
 Linking with the phone app: see `DEVICE-LINK-GUIDE.md` (Firebase setup, pairing, what you can say).
+
+## Phone APK from GitHub too
+This repository also holds the phone app in `phone/`. Add the 4 signing secrets (see `phone/SIGNING.md`) and run **Actions → Build Jarvis phone APK**.

@@ -148,7 +148,7 @@
   /* ---------------------------------------------------------------- "Jarvis" wake word (opt-in).
      Nothing leaves the PC until a short, loud burst of speech (0.3-3.5 s) is heard. Only that burst is sent to the speech key you already added,
      at most 10 times a minute. If the text contains "Jarvis" Jarvis wakes up; otherwise the text is thrown away. */
-  var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis|javis|jarwis|jarbis|yarvis|charvis|darvis|tarvis|jarvish|jarviz|jarvi|jarvik)\b[\s,.:;!?-]*/i;
+  var WAKE_RE = /\b(?:jarvis+|jarvus|jarvas|jarves|jervis|gervis|garvis|harvis|jarvice|jar vis|javis|jarwis|jarbis|yarvis|charvis|darvis|tarvis|jarvish|jarviz|jarvi|jarvik|jaarvis|jarveez|jar vees|zharvis|jervus|jarbus)\b[\s,.:;!?-]*/i;
   var sensF = 0.75;                                                   // detection strength: smaller = hears fainter / farther sounds (set from Settings)
   var wk = null, wakePaused = false, wakeCalls = [], wakeLang = 'en-GB', wakeOn = false, clapOn = false;
   function wakeStop() {
@@ -179,10 +179,11 @@
           // measured a moment ago, so it works for quiet claps, far claps and noisy rooms alike
           var BL = 512, bj, bi, bs, brms, bpk, bv, hit = false, quietNow = true;
           for (bj = 0; bj + BL <= d.length; bj += BL) {
-            bs = 0; bpk = 0;
-            for (bi = bj; bi < bj + BL; bi++) { bv = d[bi]; bs += bv * bv; if (bv > bpk) bpk = bv; else if (-bv > bpk) bpk = -bv; }
+            bs = 0; bpk = 0; var bd = 0, bdv;
+            for (bi = bj; bi < bj + BL; bi++) { bv = d[bi]; bs += bv * bv; if (bv > bpk) bpk = bv; else if (-bv > bpk) bpk = -bv; if (bi > bj) { bdv = bv - d[bi - 1]; bd += bdv * bdv; } }
             brms = Math.sqrt(bs / BL);
-            var base = Math.max(0.004, floor), jump = brms > Math.max(0.025 * sensF, base * 7 * sensF) && brms > clapPrevB * 3.2 && bpk / (brms || 1) >= 2.0;
+            var bright = bs > 0 && bd / bs >= 0.06;           // a clap is a sharp, bright burst; a bump, a bass note or a voice is not (this lets the detector be more sensitive without false alarms)
+            var base = Math.max(0.004, floor), jump = brms > Math.max(0.025 * sensF, base * 7 * sensF) && brms > clapPrevB * 3.0 && bpk / (brms || 1) >= 2.0 && bright;
             if (jump) hit = true;
             if (brms > Math.max(0.03 * sensF, base * 5 * sensF)) quietNow = false;
             clapPrevB = clapPrevB * 0.6 + brms * 0.4;
@@ -256,8 +257,9 @@
     stopListening: function () { stopRec(); },
     wakeSet: function (on) { wakeOn = !!on; wakeRefresh(); },
     quitApp: function () { P.quitApp(); },
+    screenShot: function () { return P.screenShot(); },
     clapSet: function (on) { var was = clapOn; clapOn = !!on; if (was !== clapOn) wakeStop(); wakeRefresh(); },
-    detectSens: function (n) { n = Math.max(1, Math.min(5, n | 0)); sensF = [1.5, 1.2, 1.0, 0.75, 0.55][n - 1]; },
+    detectSens: function (n) { n = Math.max(1, Math.min(5, n | 0)); sensF = [1.5, 1.1, 0.85, 0.62, 0.42][n - 1]; },
     wakePause: function (p) { wakePaused = !!p; },
     relisten: function (ms) { setTimeout(function () { emit('ballKick'); }, Math.max(0, ms | 0)); },
     voices: function () {
@@ -269,7 +271,6 @@
     // network services (answers come back as native events)
     chat: function (id, type, baseUrl, key, model, messagesJson, system) { P.chat({ id: id, type: type, baseUrl: baseUrl, key: key, model: model, messagesJson: messagesJson, system: system }); },
     listModels: function (id, type, baseUrl, key) { P.models({ id: id, type: type, baseUrl: baseUrl, key: key }); },
-    search: function (id, key, cx, query) { P.search({ id: id, key: key, cx: cx, query: query }); },
     tavily: function (id, key, query) { P.tavily({ id: id, key: key, query: query }); },
     lsearch: function (id, provider, key, query) { P.lsearch({ id: id, provider: provider, key: key, query: query }); },
     weather: function (id, key, place, units) { P.weather({ id: id, key: key, place: place, units: units }); },
