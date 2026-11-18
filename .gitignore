@@ -1,0 +1,6 @@
+*.keystore
+*.keystore.base64.txt
+dist/
+node_modules/
+phone/*.keystore
+renderer/
