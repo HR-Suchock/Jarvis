@@ -8,6 +8,7 @@ const { pathToFileURL } = require('url');
 
 const { Store } = require('./store');
 const llm = require('./llm');
+const ocr = require('./ocr');
 const { transcribe } = require('./stt');
 const { createActions, TIER } = require('./actions');
 const { Relay } = require('./relay');
@@ -123,24 +124,28 @@ async function sendToPhone(type, arg) {
   const r = await relay.send(type, arg, '', 30000);
   return { ok: !!(r && r.ok), msg: String((r && r.msg) || (r && r.ok ? 'done' : 'no answer')).slice(0, 80) };
 }
-// ---- files to the phone. Same Wi-Fi: sent straight over the network (up to 100 MB). Otherwise: encrypted pieces through Firebase (up to 5 MB).
-const FILE_MAX = 100000000, FB_MAX = 5000000;
-async function sendFileToPhone(buf, name, mime) {
+// ---- files to the phone. Same Wi-Fi: sent straight over the network (any size, streamed from disk). Otherwise: encrypted pieces through Firebase (up to 5 MB).
+// src is a Buffer or { path, size } for a file on disk.
+const FB_MAX = 5000000;
+async function sendFileToPhone(src, name, mime) {
   const c = linkCfg();
   if (!c.enabled || !c.dbUrl || !c.secret || !relay) return { ok: false, msg: 'link to phone is not set up' };
-  if (!Buffer.isBuffer(buf) || !buf.length) return { ok: false, msg: 'that file is empty' };
-  if (buf.length > FILE_MAX) return { ok: false, msg: 'too big — the limit is 100 MB' };
+  const onDisk = !Buffer.isBuffer(src);
+  const size = onDisk ? (src && src.size) | 0 : src.length;
+  if (!(size > 0)) return { ok: false, msg: 'that file is empty' };
   name = String(name || 'file').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(-80) || 'file';
   mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(mime || '') ? String(mime).toLowerCase() : 'application/octet-stream';
-  if (buf.length > FB_MAX) try {                       // 1) bigger than 5 MB: same Wi-Fi only, asked for an address, then sent directly
+  if (size > FB_MAX) try {                             // 1) bigger than 5 MB: same Wi-Fi only, asked for an address, then sent directly
     const o = await relay.send('lanoffer', '', '', 15000);
     if (o && o.ok) {
-      const r = await require('./lan').send(o.msg, buf, name, mime);
+      const r = await require('./lan').send(o.msg, src, name, mime);
       if (r && r.ok) return { ok: true, msg: String(r.msg || 'sent over Wi-Fi').slice(0, 80) };
       if (r && r.partial) return { ok: false, msg: String(r.msg || 'the Wi-Fi transfer failed').slice(0, 80) };
     }
   } catch (e) { /* fall through to the internet route */ }
-  if (buf.length > FB_MAX) return { ok: false, msg: 'files over 5 MB go by Wi-Fi only — put the phone and this PC on the same Wi-Fi (the phone must be reachable) and try again' };
+  if (size > FB_MAX) return { ok: false, msg: 'files over 5 MB go by Wi-Fi only — put the phone and this PC on the same Wi-Fi (the phone must be reachable) and try again' };
+  let buf = src;
+  if (onDisk) { try { buf = fs.readFileSync(src.path); } catch (e) { return { ok: false, msg: 'could not read that file' }; } }
   const CH = 36000, n = Math.ceil(buf.length / CH), id = crypto.randomBytes(9).toString('base64url');   // 2) Firebase pieces
   let last = null;
   for (let i = 0; i < n; i++) {
@@ -159,10 +164,12 @@ async function sendFileToPhone(buf, name, mime) {
 // A big picture is only shrunk to a JPEG when Wi-Fi is not available.
 async function ballFileToPhone(f) {
   let { name, mime, data } = f;
-  let r = await sendFileToPhone(data, name, mime);
-  if (!r.ok && data.length > FB_MAX && /^image\//i.test(mime) && /Wi-Fi only/.test(r.msg || '')) {
+  const src = f.path ? { path: f.path, size: f.size } : data;
+  let r = await sendFileToPhone(src, name, mime);
+  const big = f.path ? f.size : data.length;
+  if (!r.ok && big > FB_MAX && big < 60 * 1048576 && /^image\//i.test(mime) && /Wi-Fi only/.test(r.msg || '')) {      // no Wi-Fi: a big picture is shrunk to a JPEG
     try {
-      let img = nativeImage.createFromBuffer(data); const sz = img.getSize();
+      let img = nativeImage.createFromBuffer(f.path ? fs.readFileSync(f.path) : data); const sz = img.getSize();
       if (sz.width > 2200) img = img.resize({ width: 2200 });
       data = img.toJPEG(80); mime = 'image/jpeg'; name = name.replace(/\.[^.]*$/, '') + '.jpg';
       if (data.length > FB_MAX) return { ok: false, msg: 'no Wi-Fi link to the phone, and the picture is still over 5 MB' };
@@ -178,16 +185,34 @@ async function captureJpeg() {
   if (!srcs.length) throw new Error('no screen found');
   return srcs[0].thumbnail.toJPEG(75);
 }
+// "scan the QR code on my screen": decoded here with jsQR, nothing leaves the PC
+async function screenQr() {
+  const wasVisible = !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+  try {
+    if (wasVisible) { win.hide(); await new Promise((r) => setTimeout(r, 450)); }
+    const disp = screen.getPrimaryDisplay();
+    const w = Math.min(2560, disp.size.width), h = Math.round(w * disp.size.height / disp.size.width);
+    const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+    if (!srcs.length) return { ok: false, msg: 'I could not find a screen to look at.' };
+    const im = srcs[0].thumbnail, sz = im.getSize(), bgra = im.toBitmap(), rgba = new Uint8ClampedArray(bgra.length);
+    for (let i = 0; i < bgra.length; i += 4) { rgba[i] = bgra[i + 2]; rgba[i + 1] = bgra[i + 1]; rgba[i + 2] = bgra[i]; rgba[i + 3] = 255; }
+    const q = require('./vendor/jsQR.js')(rgba, sz.width, sz.height, { inversionAttempts: 'attemptBoth' });
+    return q && q.data ? { ok: true, text: String(q.data).slice(0, 2000) } : { ok: false, msg: 'No QR code found on the screen. Make it big and fully visible, then try again.' };
+  } catch (e) { return { ok: false, msg: 'I could not scan the screen.' }; }
+  finally { if (wasVisible && win && !win.isDestroyed()) win.show(); }
+}
 // "what is on my screen": a picture of the whole screen for a vision AI. Jarvis' own window is hidden for a moment so it does not cover the view.
 async function screenForAi() {
   const wasVisible = !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
   try {
     if (wasVisible) { win.hide(); await new Promise((r) => setTimeout(r, 450)); }
     const disp = screen.getPrimaryDisplay();
-    const w = Math.min(1920, disp.size.width), h = Math.round(w * disp.size.height / disp.size.width);
+    const w = Math.min(2560, disp.size.width), h = Math.round(w * disp.size.height / disp.size.width);
     const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
     if (!srcs.length) return { ok: false, msg: 'I could not find a screen to look at.' };
-    return { ok: true, b64: srcs[0].thumbnail.toJPEG(72).toString('base64') };
+    const thumb = srcs[0].thumbnail;
+    const text = await ocr.ocrPng(thumb.toPNG());              // the words on the screen, read offline by Windows
+    return { ok: true, text, b64: thumb.resize({ width: Math.min(1600, w) }).toJPEG(70).toString('base64') };
   } catch (e) { return { ok: false, msg: 'I could not capture the screen (' + String(e && e.message || e).slice(0, 80) + ').' }; }
   finally { if (wasVisible && win && !win.isDestroyed()) win.show(); }
 }
@@ -404,6 +429,8 @@ function wireIpc() {
       (text) => emit('chat', { id: p.id, ok: true, text }), (err) => emit('chat', { id: p.id, ok: false, error: friendlyErr(err) }));
   });
   ipcMain.on('models', (e, p) => { if (trusted(e) && p) llm.listModels(p.type, p.baseUrl, p.key).then((models) => emit('models', { id: p.id, ok: true, models }), (err) => emit('models', { id: p.id, ok: false, error: friendlyErr(err) })); });
+  ipcMain.on('netcall', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.netcall(String(p.kind || ''), String(p.arg || ''))); });
+  handle('screen:qr', () => screenQr());
   ipcMain.on('lsearch', (e, p) => { if (trusted(e) && p) done('tool', p.id, p.provider === 'serpapi' ? llm.serpapi(p.key, p.query) : llm.freeSearch(p.query)); });
   ipcMain.on('tavily', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.tavily(p.key, p.query)); });
   ipcMain.on('weather', (e, p) => { if (trusted(e) && p) done('tool', p.id, llm.weather(p.key, p.place, p.units)); });

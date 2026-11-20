@@ -29,7 +29,7 @@ function lanIps() {
 // receiving side: opens a one-shot server; onFile(name, mime, buffer) -> Promise<{ok,msg}>. Returns the offer text "LAN ip,ip port token".
 function offer(onFile, opts) {
   opts = opts || {};
-  const maxSize = opts.maxSize || 100000000;
+  const maxSize = opts.maxSize || 2 ** 50;                    // no fixed limit: the file streams to disk, only free space matters
   return new Promise((resolve) => {
     const ips = lanIps();
     if (!ips.length) { resolve(null); return; }
@@ -67,6 +67,7 @@ function offer(onFile, opts) {
             if (p[0] !== 'JLAN1' || p[1] !== proofOf(token)) { fail('not allowed'); return; }
             const size = +p[2];
             if (!(size > 0) || size > maxSize) { fail('bad size'); return; }
+            try { const st = fs.statfsSync(os.tmpdir()); if (st && st.bavail * st.bsize < size + 200 * 1048576) { fail('the PC does not have enough free disk space'); return; } } catch (e) { /* cannot tell: carry on */ }
             hdr = { size, name: unb64u(p[3] || ''), mime: unb64u(p[4] || '') };
             dec = crypto.createDecipheriv('aes-256-ctr', keyOf(token), ivOf(token));
             file = path.join(os.tmpdir(), 'jarvis-lan-' + token.slice(0, 8) + '.part');
@@ -93,11 +94,18 @@ function offer(onFile, opts) {
   });
 }
 
-// sending side: try each address from the offer; resolves {ok,msg} or null when the other device cannot be reached directly (use the slow route then)
-function send(offerText, buf, name, mime) {
+// sending side: try each address from the offer; resolves {ok,msg} or null when the other device cannot be reached directly (use the slow route then).
+// src is a Buffer or { path, size } (a file on disk is streamed, so even a huge file never sits in memory).
+async function* pieces(src) {
+  const CH = 256 * 1024;
+  if (Buffer.isBuffer(src)) { for (let o = 0; o < src.length; o += CH) yield src.subarray(o, o + CH); return; }
+  for await (const c of fs.createReadStream(src.path, { highWaterMark: CH })) yield c;
+}
+function send(offerText, src, name, mime) {
   const m = /^LAN ([0-9.,]+) (\d{2,5}) ([0-9a-f]{16,64})$/.exec(String(offerText || ''));
   if (!m) return Promise.resolve(null);
   const ips = m[1].split(','), port = +m[2], token = m[3];
+  const size = Buffer.isBuffer(src) ? src.length : src.size;
   const tryIp = (ip) => new Promise((resolve) => {
     let settled = false; const fin = (v) => { if (!settled) { settled = true; try { sock.destroy(); } catch (e) { /* ignore */ } resolve(v); } };
     const sock = net.connect({ host: ip, port });
@@ -105,18 +113,23 @@ function send(offerText, buf, name, mime) {
     sock.on('error', () => fin(null));
     sock.on('connect', () => {
       sock.setTimeout(60000, () => fin({ ok: false, msg: 'Wi-Fi transfer timed out', partial: true }));
-      const enc = crypto.createCipheriv('aes-256-ctr', keyOf(token), ivOf(token));
-      sock.write('JLAN1 ' + proofOf(token) + ' ' + buf.length + ' ' + b64u(name) + ' ' + b64u(mime) + '\n');
-      const CH = 256 * 1024; let off = 0;
-      const pump = () => {
-        while (off < buf.length) {
-          const piece = buf.subarray(off, off + CH); off += piece.length;
-          if (!sock.write(enc.update(piece))) { sock.once('drain', pump); return; }
-        }
-        sock.write(enc.update(Buffer.from(crypto.createHash('sha256').update(buf).digest('hex'))));
-        sock.write(enc.final());
-      };
-      pump();
+      const enc = crypto.createCipheriv('aes-256-ctr', keyOf(token), ivOf(token)), hash = crypto.createHash('sha256');
+      sock.write('JLAN1 ' + proofOf(token) + ' ' + size + ' ' + b64u(name) + ' ' + b64u(mime) + '\n');
+      const drain = () => new Promise((r) => { sock.once('drain', r); sock.once('close', r); });
+      (async () => {
+        try {
+          let sent = 0;
+          for await (const c of pieces(src)) {
+            if (settled) return;
+            sent += c.length; hash.update(c);
+            if (!sock.write(enc.update(c))) await drain();
+          }
+          if (settled) return;
+          if (sent !== size) { fin({ ok: false, msg: 'the file changed while it was being sent', partial: true }); return; }
+          sock.write(enc.update(Buffer.from(hash.digest('hex'))));
+          sock.write(enc.final());
+        } catch (e) { fin({ ok: false, msg: 'could not read the file', partial: true }); }
+      })();
     });
     let reply = '';
     sock.on('data', (d) => { reply += d.toString('utf8'); if (reply.indexOf('\n') >= 0) { const ok = /^OK/.test(reply); fin({ ok, msg: reply.replace(/^(OK|ERR) ?/, '').trim() || (ok ? 'Sent over Wi-Fi.' : 'failed'), partial: !ok }); } });

@@ -241,6 +241,28 @@ async function serpapi(key, query) {
   return res;
 }
 
+/* Tools panel helpers (same host list as the phone): speed test, password-leak check (only 5 hash characters leave the PC), currency rates. */
+async function netcall(kind, arg) {
+  const t0 = () => process.hrtime.bigint(), ms = (t) => Number(process.hrtime.bigint() - t) / 1e6;
+  const get = async (url, to, extra) => {
+    let res; try { res = await doFetch(url, Object.assign({ method: 'GET', signal: AbortSignal.timeout(to), headers: { 'Cache-Control': 'no-cache' } }, extra || {})); } catch (e) { throw netError(e); }
+    if (res.status >= 400) throw new Error('The service did not answer. Try again later.');
+    return res;
+  };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.floor(+v) || lo));
+  if (kind === 'ping') { const t = t0(); await (await get('https://speed.cloudflare.com/__down?bytes=0', 8000)).arrayBuffer(); return { ms: ms(t) }; }
+  if (kind === 'down') { const b = clamp(arg, 100000, 60000000), t = t0(); const buf = await (await get('https://speed.cloudflare.com/__down?bytes=' + b, 30000)).arrayBuffer(); return { bytes: buf.byteLength, ms: ms(t) }; }
+  if (kind === 'up') {
+    const b = clamp(arg, 50000, 30000000), t = t0(); let res;
+    try { res = await doFetch('https://speed.cloudflare.com/__up', { method: 'POST', body: Buffer.alloc(b), headers: { 'Content-Type': 'application/octet-stream' }, signal: AbortSignal.timeout(30000) }); } catch (e) { throw netError(e); }
+    await res.arrayBuffer(); if (res.status >= 400) throw new Error('The test server answered with an error. Try again in a moment.');
+    return { bytes: b, ms: ms(t) };
+  }
+  if (kind === 'hibp') { if (!/^[0-9a-f]{5}$/i.test(String(arg))) throw new Error('Bad request.'); return { text: (await (await get('https://api.pwnedpasswords.com/range/' + String(arg).toUpperCase(), 15000, { headers: { 'Add-Padding': 'true' } })).text()).slice(0, 400000) }; }
+  if (kind === 'rates') return { text: (await (await get('https://open.er-api.com/v6/latest/USD', 15000)).text()).slice(0, 200000) };
+  throw new Error('Unknown tool request.');
+}
+
 async function weather(key, place, units) {
   if (!key || !String(key).trim()) throw new ApiError(0, 'Add your OpenWeather API key in Settings > Services.');
   if (!place || !String(place).trim()) throw new ApiError(0, 'Which city?');
@@ -259,4 +281,4 @@ async function weather(key, place, units) {
   };
 }
 
-module.exports = { __http: http, doFetch,  chat, listModels, tavily, freeSearch, serpapi, weather, ApiError, netError };
+module.exports = { __http: http, doFetch,  chat, listModels, tavily, freeSearch, serpapi, weather, netcall, ApiError, netError };

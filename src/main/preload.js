@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   tavily: (p) => ipcRenderer.send('tavily', p),
   weather: (p) => ipcRenderer.send('weather', p),
   screenShot: () => ipcRenderer.invoke('screen:shot'),
+  screenQr: () => ipcRenderer.invoke('screen:qr'),
+  netcall: (p) => ipcRenderer.send('netcall', p),
   stt: (buf, lang) => ipcRenderer.invoke('stt', buf, lang),
   link: {
     state: () => sync('link:state'),

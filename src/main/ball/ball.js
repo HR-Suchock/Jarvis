@@ -122,9 +122,9 @@
     var t = dt.getData('text/uri-list') || dt.getData('text/plain') || '';
     if (!t && dt.files && dt.files.length) {
       var f = dt.files[0];
-      if (f.size > 100000000) { say('too big — the limit is 100 MB'); return; }
       say('sending ' + f.name.slice(0, 24) + '…');
-      f.arrayBuffer().then(function (buf) { return J.dropFile(f.name, f.type, buf); }).then(function (r) { say(r && r.msg ? r.msg : 'sent'); }, function () { say('failed'); });
+      var go = f.size > 20000000 && J.dropPath ? J.dropPath(f, f.name, f.type) : f.arrayBuffer().then(function (buf) { return J.dropFile(f.name, f.type, buf); });   // big files are streamed from disk, never loaded into memory
+      go.then(function (r) { say(r && r.msg ? r.msg : 'sent'); }, function () { say('failed'); });
       return;
     }
     if (!t) return; say('sending to phone…');

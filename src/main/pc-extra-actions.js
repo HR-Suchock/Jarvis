@@ -33,7 +33,7 @@ const TIER = {
   jobadd: 'ctl', joblist: 'ctl', jobdel: 'ctl', backup: 'ctl', mouse: 'input', mediakey: 'ctl',
   logoff: 'danger', emptybin: 'danger',
   // v1.28.0: PC management + files from the phone
-  procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', filepart: 'ctl', lanoffer: 'ctl',
+  procs: 'ctl', netinfo: 'ctl', startups: 'ctl', taskmgr: 'ctl', cleantemp: 'danger', tidydl: 'danger', filepart: 'ctl', lanoffer: 'ctl',
   // local library + YouTube (v1.21.0)
   playfile: 'ctl', playany: 'ctl', playrandom: 'ctl', ytplay: 'ctl', medialist: 'ctl', openfolder: 'ctl',
   stopmedia: 'input',
@@ -44,7 +44,7 @@ const TIER = {
 // Windows "Settings" pages that may be opened (fixed list)
 const SETTINGS = {
   wifi: 'ms-settings:network-wifi', network: 'ms-settings:network', bluetooth: 'ms-settings:bluetooth',
-  display: 'ms-settings:display', sound: 'ms-settings:sound', update: 'ms-settings:windowsupdate',
+  display: 'ms-settings:display', sound: 'ms-settings:sound', speech: 'ms-settings:speech', update: 'ms-settings:windowsupdate',
   apps: 'ms-settings:appsfeatures', battery: 'ms-settings:batterysaver', power: 'ms-settings:powersleep',
   storage: 'ms-settings:storagesense', privacy: 'ms-settings:privacy', personalization: 'ms-settings:personalization',
   notifications: 'ms-settings:notifications', 'default apps': 'ms-settings:defaultapps', 'startup apps': 'ms-settings:startupapps',
@@ -572,6 +572,32 @@ function make(deps) {
       if (platform !== 'win32') return R(false, WINMSG);
       try { exec('cmd', ['/c', 'start', '', 'taskmgr'], { windowsHide: true, timeout: 5000 }, () => {}); } catch (e) { return R(false, 'I could not open Task Manager.'); }
       return R(true, 'Opening Task Manager.');
+    },
+    // v1.39.0: sort loose files in Downloads into Sorted/<Category>. Nothing is deleted; a name clash gets a number.
+    async tidydl(arg) {
+      const dir = path.join(os.homedir(), 'Downloads');
+      const CAT = { Images: 'jpg jpeg png gif webp bmp svg heic', Documents: 'pdf doc docx xls xlsx ppt pptx txt rtf odt csv md', Videos: 'mp4 mkv avi mov wmv webm', Music: 'mp3 wav flac aac ogg m4a', Archives: 'zip rar 7z tar gz iso', Programs: 'exe msi apk bat' };
+      const map = {}; Object.keys(CAT).forEach((c) => CAT[c].split(' ').forEach((e) => { map[e] = c; }));
+      let list = []; try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return R(false, 'I cannot open your Downloads folder.'); }
+      const plan = {}; let n = 0;
+      for (const ent of list) {
+        if (!ent.isFile() || ent.isSymbolicLink() || /\.(crdownload|part|tmp|download)$/i.test(ent.name)) continue;
+        const cat = map[(path.extname(ent.name).slice(1) || '').toLowerCase()] || 'Other';
+        (plan[cat] = plan[cat] || []).push(ent.name); n++;
+      }
+      if (!n) return R(true, 'Your Downloads folder is already tidy.');
+      if (String(arg) !== 'run') return R(true, n + ' loose files would be sorted: ' + Object.keys(plan).map((c) => plan[c].length + ' ' + c).join(', ') + '. Choose TIDY DOWNLOADS NOW to do it. Nothing is deleted.');
+      let moved = 0;
+      for (const cat of Object.keys(plan)) {
+        const to = path.join(dir, 'Sorted', cat);
+        try { fs.mkdirSync(to, { recursive: true }); } catch (e) { continue; }
+        for (const name of plan[cat]) {
+          const ext = path.extname(name), base = path.basename(name, ext); let dest = path.join(to, name), k = 1;
+          while (fs.existsSync(dest) && k < 500) dest = path.join(to, base + ' (' + (k++) + ')' + ext);
+          try { fs.renameSync(path.join(dir, name), dest); moved++; } catch (e) { /* in use: skip */ }
+        }
+      }
+      return R(true, 'Sorted ' + moved + ' files into Downloads/Sorted.');
     },
     async cleantemp() {
       const dir = os.tmpdir();

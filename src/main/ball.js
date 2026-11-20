@@ -242,9 +242,15 @@ function createBall(ctx) {
   handleB('ball:dropfile', async (name, mime, data) => {
     const buf = data && data.byteLength !== undefined ? Buffer.from(data) : null;
     if (!buf || !buf.length) return { ok: false, msg: 'that file is empty' };
-    if (buf.length > 100 * 1000 * 1000) return { ok: false, msg: 'too big — the limit is 100 MB' };
+    if (buf.length > 200 * 1000 * 1000) return { ok: false, msg: 'drop bigger files straight onto the ball (they are sent from disk)' };
     if (!ctx.fileToPhone) return { ok: false, msg: 'files are not available' };
     return await ctx.fileToPhone({ name: String(name || 'file').slice(0, 120), mime: String(mime || ''), data: buf });
+  });
+  handleB('ball:dropfilepath', async (p, name, mime) => {           // a big file: only its path travels; it is streamed from disk
+    let st; try { st = require('fs').statSync(String(p || '')); } catch (e) { return { ok: false, msg: 'could not find that file' }; }
+    if (!st.isFile() || !(st.size > 0)) return { ok: false, msg: 'that file is empty' };
+    if (!ctx.fileToPhone) return { ok: false, msg: 'files are not available' };
+    return await ctx.fileToPhone({ name: String(name || require('path').basename(String(p))).slice(0, 120), mime: String(mime || ''), path: String(p), size: st.size });
   });
   handleB('ball:drop', async (text) => { const c = classifyDrop(text); if (!c) return { ok: false, msg: 'nothing to send' }; return await ctx.toPhone(c); });
 
