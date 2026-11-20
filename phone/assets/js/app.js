@@ -106,6 +106,11 @@
     if (o.ttsEngine !== undefined && o.voiceMode === undefined) { s.rate = Math.min(s.rate, 1.5); }
     if (o.pitch === 0.85) s.pitch = 1.0;
     if (['en-GB', 'bn-BD', 'hi-IN'].indexOf(s.lang) < 0) s.lang = 'en-GB';
+    if (s.about && typeof s.about === 'object' && Object.keys(s.about).length) {                        // the old About-me form became the learned list
+      var lab = { fullName: 'Name', work: 'Works as', city: 'Lives in', langs: 'Speaks', interests: 'Likes', goals: 'Goals', likes: 'Prefers answers', notes: 'Note' }, mig = Array.isArray(s.learned) ? s.learned.slice() : [];
+      Object.keys(lab).forEach(function (k) { var v = String(s.about[k] || '').replace(/\s+/g, ' ').trim().slice(0, 160); if (v && !mig.some(function (m) { return m && m.f && m.f.indexOf(lab[k] + ': ') === 0; })) mig.push({ f: lab[k] + ': ' + v, t: Date.now() }); });
+      s.learned = mig.slice(-40); s.about = {};
+    }
     delete s.services.srKey; delete s.services.gsKey; delete s.services.gsCx;            // Serper and Google search were removed
     if (s.active === 'mistral' || !PROVIDERS.some(function (p) { return p.id === s.active; })) s.active = 'gemini';
     s.aiOrder = cleanOrder(s.aiOrder, PROVIDERS.map(function (p) { return p.id; }));
@@ -173,6 +178,11 @@
   var partialEl = $('#partial');
   var micEl = $('#btn-mic');
   var textEl = $('#text');
+  function growBox() {                                       // the box grows with the text (up to 40% of the screen), like a chat app
+    var base = PC ? 40 : 52;
+    textEl.style.height = base + 'px'; var h = textEl.scrollHeight;
+    textEl.style.height = Math.max(base, Math.min(h, Math.round(window.innerHeight * (PC ? 0.34 : 0.4)))) + 'px';
+  }
   var sendEl = $('#btn-send');
 
   function scrollLog() { logEl.scrollTop = logEl.scrollHeight; }
@@ -1022,7 +1032,8 @@
         if (PC && !r.ok && /cannot do|do not know|unknown/i.test(r.msg || '')) { set('ok', 'Your phone is on an older version, so the clocks were not compared. Update the phone app.'); next(); return; }
         var m = String(r.raw || r.msg).match(/epoch (\d{10,})/);
         if (!r.ok || !m) { set('warn', r.ok ? 'Could not read the other clock.' : r.msg); next(); return; }
-        var diff = Math.round((+m[1] - (t0 + Date.now()) / 2) / 1000), a = Math.abs(diff);
+        var ot = +m[1]; if (ot < 1e11) ot *= 1000;                       // the phone answers in seconds, the PC in milliseconds
+        var diff = Math.round((ot - (t0 + Date.now()) / 2) / 1000), a = Math.abs(diff);
         if (a > 100) set('bad', 'The clocks differ by about ' + Math.round(a / 60) + ' minutes — messages will be rejected. Set date and time to automatic on both devices.'); else if (a > 45) set('warn', 'The clocks differ by ' + a + ' seconds. Fine for now, but set time to automatic.'); else set('ok', 'Within ' + Math.max(a, 1) + ' second' + (a > 1 ? 's' : '') + '.');
         next();
       });
@@ -1607,6 +1618,76 @@
     return null;
   }
 
+  /* ------------------------------------------------------------------ tools panel (local helpers, no AI tokens) */
+  var toolsReady = false;
+  function toolsInit() {
+    if (toolsReady) return true;
+    if (!window.JarvisTools) return false;
+    toolsReady = true;
+    window.JarvisTools.init({
+      PC: PC, makePanel: makePanel, toast: toast,
+      copy: function (t) { copyTxt(t); },
+      paste: function () { try { return navigator.clipboard.readText(); } catch (e) { return Promise.resolve(''); } },
+      net: function (kind, arg) {
+        return new Promise(function (res, rej) {
+          var id = 'n' + (++reqSeq), key = 't' + id;
+          if (!B || !B.netcall) { rej(new Error('This needs the Jarvis app, not the preview.')); return; }
+          var timer = setTimeout(function () { delete pendingChat[key]; rej(new Error('The network test took too long.')); }, 45000);
+          pendingChat[key] = function (d) { clearTimeout(timer); if (d && d.ok) res(d.data || {}); else rej(new Error((d && d.error) || 'No internet connection.')); };
+          B.netcall(id, kind, String(arg || ''));
+        });
+      },
+      act: function (type, arg, arg2) {
+        if (PC && B && B.actionAsync) return B.actionAsync(type, arg || '', arg2 || '');
+        return Promise.resolve(doAction(type, arg, arg2));
+      },
+      screenQr: function () { return (PC && B && B.screenQr) ? B.screenQr() : Promise.resolve({ ok: false, msg: 'Not available here.' }); },
+      screenText: function () {
+        if (!(PC && B && B.screenShot)) return Promise.resolve({ ok: false, msg: 'Not available here.' });
+        return B.screenShot().then(function (r) { return { ok: !!(r && r.ok), text: (r && r.text) || '', msg: r && r.ok ? '' : 'I could not read the screen.' }; });
+      },
+      flash: PC ? null : function (on) { doAction('torch', on ? 'on' : 'off'); },
+      remember: function () { }
+    });
+    return true;
+  }
+  function openTools(id, auto) { if (toolsInit()) window.JarvisTools.open(id, auto); else toast('Tools are not available.'); }
+  function toolsIntent(raw) {
+    if (!window.JarvisTools) return null;
+    var r; try { r = window.JarvisTools.intent(raw); } catch (e) { return null; }
+    if (!r) return null;
+    return { kind: 'ui', fn: function () { if (r.run) { toolsInit(); r.run(); } }, text: r.text, silent: false, noHistory: true };
+  }
+
+  /* ------------------------------------------------------------------ emergency mode (phone only) */
+  var emReady = false;
+  function openEmergency() {
+    if (PC || !window.JarvisEmergency) { toast('Emergency mode is on the phone only.'); return; }
+    if (!emReady) {
+      emReady = true;
+      window.JarvisEmergency.init({
+        panel: makePanel('emergency', 'EMERGENCY'), act: doAction, perms: perms, toast: toast, store: store,
+        copy: function (t) { copyTxt(t); }, requestLocation: function () { try { B.requestLocation(); } catch (e) { toast('Open Android settings and allow location for Jarvis.', 4000); } },
+        confirm: function (q, yes) { yes(); }, shareToPc: function (t) { try { shareToPc(t); } catch (e) { /* not linked */ } }
+      });
+      toolsInit();
+    }
+    window.JarvisEmergency.open();
+  }
+  function emergencyIntent(t) {
+    if (PC) {
+      if (/^(?:where(?:'s| is) my phone|phone location|locate my phone on (?:the )?map|where am i)$/.test(t))
+        return { kind: 'ui', fn: function () { linkSend('where', '', '', function (d) { if (d.ok) { respond(d.msg); var m = /q=([-\d.,]+)/.exec(d.msg || ''); if (m) setTimeout(function () { openLink('https://maps.google.com/?q=' + m[1]); }, 600); } else respondError(d.msg); }); }, text: 'Asking your phone where it is.', silent: false, noHistory: true };
+      return null;
+    }
+    if (/^(?:emergency|emergency mode|open emergency|emergency tools|i need help|help me)$/.test(t)) return { kind: 'ui', fn: openEmergency, text: 'Opening emergency mode. If you are in danger, call 999 first.', silent: false, noHistory: true };
+    if (/^(?:sos|sos light|flash sos|send sos|sos flashlight|signal sos)$/.test(t)) return { kind: 'ui', fn: function () { doAction('morse', 'sos', ''); }, text: 'Flashing S O S with the flashlight. Say stop signals to end it.', silent: false, noHistory: true };
+    if (/^(?:loud alarm|loud siren|siren|emergency alarm|survival alarm)$/.test(t)) return { kind: 'ui', fn: function () { doAction('emsound', 'siren', ''); }, text: 'Siren on at full volume. Say stop alarm to end it.', silent: false, noHistory: true };
+    if (/^(?:whistle|survival whistle|emergency whistle)$/.test(t)) return { kind: 'ui', fn: function () { doAction('emsound', 'whistle', ''); }, text: 'Whistle on. Say stop alarm to end it.', silent: false, noHistory: true };
+    if (/^(?:stop (?:the |all )?(?:alarm|siren|whistle|sos|signals?|flashing|flashlight signal)|emergency off|stop emergency)$/.test(t)) return { kind: 'ui', fn: function () { doAction('emstop', '', ''); }, text: 'All emergency signals are off.', silent: false, noHistory: true };
+    return null;
+  }
+
   function localIntent(raw) {
     var t = norm(raw), m;
     if (!t) return null;
@@ -1616,6 +1697,8 @@
     var cf = ctxFollow(t);
     if (cf) return cf;
     if (PC) { var pi = pcIntent(t); if (pi) return pi; }
+    var emi = emergencyIntent(t); if (emi) return emi;
+    var tli = toolsIntent(raw); if (tli) return tli;
     var gi = generalIntent(t, raw); if (gi) return gi;
     if (!PC) { var ph = phoneIntent(t, raw); if (ph) return ph; }
     var rtm = rtGet().length ? rtFind(t) : null;
@@ -2118,6 +2201,7 @@
     finishLocal(li, doAction(li.type, li.arg, li.arg2));
   }
   /* "what's on my screen": read the open screen (Accessibility), then let the AI do the task with that text */
+  var SCREEN_RULES = 'Describe ONLY what is in the screen content given. Never invent apps, messages, names, numbers or details that are not in it. If the content is just menus or labels, say which app or page it seems to be and what the visible options are. If something is unclear, say so.\n\n';
   function screenAsk(li) {
     if (PC) { pcScreenAsk(li); return; }
     var st = doAction('screenlater');
@@ -2135,20 +2219,32 @@
       var order = providerOrder();
       if (!order.length) { respondError('Neural link not configured. Open Settings and add a free API key.', 'My AI core is not connected, ' + addrName() + '.'); return; }
       setState('thinking'); var typing = addTyping(); failLog = [];
-      tryProvider(order, 0, typing, 'Text currently visible on the user\'s phone screen (read from the screen, so it may include menu and button labels):\n"""\n' + String(m).slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
+      soloMsg = SCREEN_RULES + 'Text read from the user\'s phone screen right now (it may include menu and button labels):\n"""\n' + String(m).slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.';
+      tryProvider(order, 0, typing, soloMsg);
     })();
   }
   /* PC: Jarvis takes a picture of the whole screen and shows it to an AI that can see pictures (Gemini, OpenAI, Claude, Grok or a Custom AI that supports images) */
-  var visionShot = null, VISION_IDS = ['gemini', 'anthropic', 'openai', 'xai', 'custom'];
+  var visionShot = null, soloMsg = null, VISION_IDS = ['gemini', 'anthropic', 'openai', 'xai', 'custom'];
   function pcScreenAsk(li) {
-    if (!B || !B.screenShot) { respond('Looking at the screen needs the latest PC version of Jarvis, ' + addrName() + '.'); return; }
-    var order = providerOrder().filter(function (p) { return VISION_IDS.indexOf(p.id) >= 0; });
-    if (!order.length) { respond('I need an AI that can see pictures to look at the screen, ' + addrName() + '. Add a Google Gemini key (free) under Settings \u203a Neural Link \u2014 OpenAI, Claude and Grok also work.'); return; }
-    setState('thinking'); var typing = addTyping();
+    if (!B || !B.screenShot) { respond('Reading the screen needs the latest PC version of Jarvis, ' + addrName() + '.'); return; }
+    setState('thinking'); var typing = addTyping(), all = providerOrder();
+    if (!all.length) { typing.remove(); respondError('Neural link not configured. Open Settings and add a free API key.', 'My AI core is not connected, ' + addrName() + '.'); return; }
     Promise.resolve(B.screenShot()).then(function (r) {
-      if (!r || !r.ok || !r.b64) { typing.remove(); respond((r && r.msg) || 'I could not capture the screen, ' + addrName() + '.'); return; }
-      visionShot = { mime: 'image/jpeg', b64: r.b64 }; failLog = [];
-      tryProvider(order, 0, typing, 'A picture of the user\'s whole PC screen is attached to this message (it may include Jarvis\' own window; ignore it). Look at it carefully.\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.');
+      if (!r || !r.ok) { typing.remove(); respond((r && r.msg) || 'I could not capture the screen, ' + addrName() + '.'); return; }
+      failLog = [];
+      var text = String(r.text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+      var vis = all.filter(function (p) { return VISION_IDS.indexOf(p.id) >= 0; });
+      if (text.length >= 25) {                                    // the words on the screen, read by Windows itself: cheap, works with every AI
+        soloMsg = SCREEN_RULES + 'Text read from the user\'s PC screen right now by character recognition (it may contain small mistakes and menu labels):\n"""\n' + text.slice(0, 3500) + '\n"""\nTask: ' + li.task + ' Keep the reply short and spoken-friendly.';
+        tryProvider(all, 0, typing, soloMsg); return;
+      }
+      if (vis.length && r.b64) {                                  // not much text (a photo, a video, a game): show the picture to an AI that can see
+        visionShot = { mime: 'image/jpeg', b64: r.b64 };
+        soloMsg = SCREEN_RULES + 'A picture of the user\'s whole PC screen is attached (ignore the Jarvis window if it is visible). Task: ' + li.task + ' Keep the reply short and spoken-friendly.';
+        tryProvider(vis, 0, typing, soloMsg); return;
+      }
+      typing.remove();
+      respond(text ? 'I could only read a few words on the screen: \u201c' + text.slice(0, 120) + '\u201d, ' + addrName() + '. For pictures I need an AI that can see images \u2014 add a free Google Gemini key in Settings \u203a Neural Link.' : 'I could not find readable text on the screen, ' + addrName() + '. It may be a picture or video \u2014 add a free Google Gemini key in Settings \u203a Neural Link and I can look at pictures too.');
     }, function () { typing.remove(); respond('I could not capture the screen, ' + addrName() + '.'); });
   }
   function greetAndListen() {          // used by the clap and by the spoken name: greets like at start-up, then listens
@@ -2305,7 +2401,7 @@
           row.appendChild(mid);
           if (e.r === 'u') {
             var re = el('button', '', '↻'); re.setAttribute('aria-label', 'Use again');
-            re.addEventListener('click', function () { histP.close(); if (settingsOpen) closeSettings(); textEl.value = e.c; sendEl.classList.add('on'); textEl.focus(); });
+            re.addEventListener('click', function () { histP.close(); if (settingsOpen) closeSettings(); textEl.value = e.c; sendEl.classList.add('on'); growBox(); textEl.focus(); });
             row.appendChild(re);
           }
           var x = el('button', 'x', '✕'); x.setAttribute('aria-label', 'Delete');
@@ -2321,6 +2417,8 @@
   }
 
   var CMDS = [
+    ['TOOLS (NO AI TOKENS)', [['Open tools', 'tools', 1], ['Speed test', 'speed test', 1], ['What is 15% of 240', 'what is 15% of 240'], ['Convert 5 km to miles', 'convert 5 km to miles'], ['Is bit.ly/abc safe', 'is bit.ly/abc safe'], ['Morse for SOS', 'morse for sos'], ['Flip a coin', 'flip a coin']]],
+    ].concat(PC ? [] : [['EMERGENCY', [['Emergency mode', 'emergency', 1], ['SOS flashlight', 'sos'], ['Loud siren', 'loud alarm'], ['Whistle', 'whistle'], ['Stop all signals', 'stop alarm']]]]).concat([
     ['PHONE & APPS', [['Open YouTube', 'open youtube', 1], ['Open WhatsApp', 'open whatsapp'], ['Flashlight on', 'flashlight on', 1], ['Volume up', 'volume up', 1], ['Wi-Fi settings', 'wifi settings'], ['Go home', 'go home'], ['Battery level', 'battery level', 1]]],
     ['CALLS & MESSAGES', [['Call Mom', 'call mom'], ['Text Mom', 'send a text to mom saying I am running late'], ['Navigate home', 'navigate to home']]],
     ['TIME & REMINDERS', [['What time is it', 'what time is it', 1], ['Timer 5 min', 'set a timer for 5 minutes', 1], ['Wake me at 7', 'wake me at 7 am'], ['In 20 min…', 'remind me in 20 minutes to drink water'], ['Every day at 8', 'remind me every day at 8 am to take medicine'], ['Every Friday', 'remind me every friday at 6 pm to call family'], ['Weekdays alarm', 'set an alarm on weekdays at 6:30 am'], ['Snooze 10 min', 'snooze 10 minutes'], ['My reminders', 'show my reminders', 1]]],
@@ -2335,7 +2433,7 @@
     ['LISTS & TOOLS', [['Add milk to list', 'add milk to my shopping list', 1], ['Show my list', 'show my shopping list', 1], ['Strong password', 'generate a password', 1], ['Focus 25 min', 'start a focus session'], ['Choose for me', 'choose tea or coffee', 1]]],
     ['CONVERT & CALCULATE', [['5 km to miles', 'convert 5 km to miles', 1], ['70 kg to lb', 'convert 70 kg to lb', 1], ['30 °C to °F', 'convert 30 c to f', 1], ['Days until Christmas', 'days until christmas', 1], ['Tip 15% on 48', 'tip 15% on 48 between 2', 1]]],
     ['JARVIS', [['Speak Bangla', 'speak bangla', 1], ['Speak English', 'speak english', 1], ['Show history', 'show history', 1], ['Amber theme', 'switch to amber theme', 1], ['Cyan theme', 'switch to cyan theme', 1], ['System status', 'system status', 1]]]
-  ];
+  ]);
   var cmdP = null;
   function openCmds() {
     if (!cmdP) {
@@ -2350,7 +2448,7 @@
           b.addEventListener('click', function () {
             haptic(); cmdP.close(); if (settingsOpen) closeSettings();
             if (it[2]) handleUser(it[1], false);
-            else { textEl.value = it[1]; sendEl.classList.add('on'); textEl.focus(); }
+            else { textEl.value = it[1]; sendEl.classList.add('on'); growBox(); textEl.focus(); }
           });
           ex.appendChild(b);
         });
@@ -2700,16 +2798,9 @@
   }
 
   /* ------------------------------------------------------------------ AI */
-  var ABOUT_F = [
-    ['fullName', 'FULL NAME', 'Your name', 'text'], ['work', 'WORK OR STUDY', 'e.g. software developer, medical student', 'text'], ['city', 'WHERE YOU LIVE', 'City, country', 'text'],
-    ['langs', 'LANGUAGES YOU SPEAK', 'e.g. English, Bangla', 'text'], ['interests', 'INTERESTS AND HOBBIES', 'e.g. coding, cricket, sci-fi films', 'text'], ['goals', 'CURRENT GOALS', 'What you are working towards', 'area'],
-    ['likes', 'HOW YOU LIKE ANSWERS', 'e.g. short and direct, explain step by step', 'text'], ['notes', 'ANYTHING ELSE JARVIS SHOULD KNOW', 'Family, routine, things to avoid', 'area']
-  ];
   function aboutText() {
     if (S.aboutOn === false) return '';
-    var lab = { fullName: 'Full name', work: 'Work or study', city: 'Lives in', langs: 'Languages', interests: 'Interests', goals: 'Current goals', likes: 'Prefers answers', notes: 'Also' }, out = [];
-    ABOUT_F.forEach(function (f) { var v = String((S.about || {})[f[0]] || '').replace(/\s+/g, ' ').trim().slice(0, 300); if (v) out.push(lab[f[0]] + ': ' + v); });
-    var ln = learnedText(); if (ln) out.push('Learned from our chats (important details only): ' + ln);
+    var out = [], ln = learnedText(); if (ln) out.push(ln);
     return out.length ? '\nAbout the user (their own profile; use it only when the user asks about themselves or when it clearly helps the answer, never recite it unprompted):\n' + out.join('\n') : '';
   }
   function buildSystem() {
@@ -2729,6 +2820,7 @@
     return p;
   }
   function aiMessages(extra) {
+    if (soloMsg) { var one = { role: 'user', content: soloMsg }; if (visionShot) one.image = visionShot; return [one]; }       // screen reading: no chat history, so old answers cannot leak in
     var h = history.slice(-16);
     while (h.length && h[0].role !== 'user') h.shift();
     var out = h.map(function (m) { return { role: m.role, content: m.content }; });
@@ -2822,7 +2914,7 @@
           runTool('websearch', rq, function (td) { if (td.ok && td.data && td.data.length) tryProvider(order, i, typing, searchContext(rq, td.data)); else { searchRetried = true; tryProvider(order, i, typing, undefined); } });
           return;
         }
-        typing.remove(); visionShot = null;
+        typing.remove(); visionShot = null; soloMsg = null;
         var parsed = runTags(d.text, !!extra);
         var shown = parsed.text || (parsed.results.length ? 'Done.' : 'I could not retrieve that information.');
         history.push({ role: 'assistant', content: shown });
@@ -2845,7 +2937,7 @@
         tryProvider(order, i + 1, typing, extra);
         return;
       }
-      typing.remove(); visionShot = null;
+      typing.remove(); visionShot = null; soloMsg = null;
       history.pop();
       var lines = failLog.map(function (f) { return f.name + ': ' + f.msg; }), hint = '';
       for (var q = 0; q < failLog.length && !hint; q++) hint = errHint(failLog[q].msg);
@@ -2863,7 +2955,7 @@
     if (PC) hudTask(text);
     text = (text || '').trim();
     if (!text) return;
-    lastFromVoice = !!fromVoice; visionShot = null;
+    lastFromVoice = !!fromVoice; visionShot = null; soloMsg = null;
     stopSpeakingNow();
     addMsg('u', text);
     try { learnFrom(text); } catch (e) { /* learning must never break a command */ }
@@ -2980,7 +3072,13 @@
     ballListen: function () { if (PC) { handsFreeSuspended = false; emptyListens = 0; startListening(); } },
     shareIn: function (d) { if (d && d.text) shareToPc(d.text); },
     wakeResult: function (d) { respond(d.msg || (d.ok ? 'Done.' : 'That failed.')); if (d.ok) wakeWatch(); },
-    linkIn: function (d) { lkAdd({ t: Date.now(), d: 'in', ty: d.type, a: logArg(d.type, d.arg), ok: !!d.ok, m: String(d.msg || '').slice(0, 160) }); noteOnline(true); addMsg('act', '\ud83d\udce1 ' + (PC ? 'Phone' : 'PC') + ': ' + d.type + (d.arg ? ' ' + String(d.arg).slice(0, 60) : '') + ' \u2192 ' + (d.ok ? '\u2713' : '\u2715 ' + (d.msg || '')), true); },
+    linkIn: function (d) {
+      if (d.type === 'filepart' && d.ok) {                                  // a big file is many small pieces: show one line, when the last piece is in
+        var fp = null, ra = String(d.arg || ''); try { fp = JSON.parse(ra); } catch (e) { var mi = ra.match(/"i":(\d+)/), mn = ra.match(/"n":(\d+)/), mm = ra.match(/"name":"([^"]*)/); fp = mi && mn ? { i: +mi[1], n: +mn[1], name: mm ? mm[1] : '' } : null; }
+        if (!fp || +fp.i + 1 < +fp.n) { noteOnline(true); return; }
+        addMsg('act', '\ud83d\udce1 File sent \u2192 ' + String(fp.name || 'file').slice(0, 40) + ' \u2713', true); noteOnline(true); return;
+      }
+      lkAdd({ t: Date.now(), d: 'in', ty: d.type, a: logArg(d.type, d.arg), ok: !!d.ok, m: String(d.msg || '').slice(0, 160) }); noteOnline(true); addMsg('act', '\ud83d\udce1 ' + (PC ? 'Phone' : 'PC') + ': ' + d.type + (d.arg ? ' ' + String(d.arg).slice(0, 60) : '') + ' \u2192 ' + (d.ok ? '\u2713' : '\u2715 ' + (d.msg || '')), true); },
     reminderFired: function (d) { addMsg('j', '\u23f0 ' + (d.label || 'Time is up') + ', ' + addrName() + '.'); },
     listenError: function (d) {
       var c = d.code;
@@ -3100,6 +3198,7 @@
   var settingsPage = '', showSettingsPage = null, rankRedraw = [];
   function promote(id) { var o = cleanOrder(S.aiOrder, PROVIDERS.map(function (p) { return p.id; })); o.splice(o.indexOf(id), 1); o.unshift(id); S.aiOrder = o; }
   var ICONS = {
+    'EMERGENCY': '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v6M9 11h6"/>',
     'SETUP CHECK': '<path d="M5 12l5 5 9-10"/>',
     'NEURAL LINK': '<circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3"/>',
     'FALLBACK ORDER': '<path d="M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
@@ -3129,6 +3228,7 @@
     ['APPEARANCE', 'Interface colour theme'],
     ['CONVERSATIONS & COMMANDS', 'History, command cards, system graphs'],
     ['SECURITY', 'Screen-lock and privacy options'],
+    ['EMERGENCY', 'Loud alarm, SOS light, Morse, location, survival guide'],
     ['BACKUP & RESTORE', 'Save or restore your keys, notes and PC link'],
     ['DATA', 'Clear chat or wipe everything']
   ];
@@ -3445,7 +3545,7 @@
         var gd = grid(2);
         send(gd, 'BRIGHT −', 'brightness', 'down'); send(gd, 'BRIGHT +', 'brightness', 'up'); send(gd, 'DARK MODE', 'darkmode', 'toggle');
         send(gd, 'SCREENSHOT', 'screenshot', '', { cls: '' });
-        grp('SEND TO THE PC', 'Photos and files are saved (up to 100 MB on the same Wi-Fi, up to 5 MB over the internet) in the PC’s Pictures\\Jarvis or Downloads\\Jarvis folder.');
+        grp('SEND TO THE PC', 'Photos and files are saved (any size on the same Wi-Fi, up to 5 MB over the internet) in the PC’s Pictures\\Jarvis or Downloads\\Jarvis folder.');
         var gf = grid(2);
         gb(gf, 'SEND PHOTO / FILE', 'pri', function () { try { if (!B.linkPickFile || !B.linkPickFile()) toast('Could not open the file picker', 3000); } catch (e) { toast('Could not open the file picker', 3000); } });
         gb(gf, 'SEND CLIPBOARD', '', function () { shareToPc(B && B.clipboardText ? B.clipboardText() : ''); });
@@ -3472,6 +3572,10 @@
         send(gs2, 'VOL −', 'volume', 'down'); send(gs2, 'PLAY / PAUSE', 'media', 'play'); send(gs2, 'VOL +', 'volume', 'up');
         grp('FLASHLIGHT'); var gt = grid(2); send(gt, 'TORCH ON', 'torch', 'on'); send(gt, 'TORCH OFF', 'torch', 'off');
         grp('FIND MY PHONE'); var gp = grid(2); send(gp, 'RING PHONE', 'findphone', '', { cls: 'pri' }); send(gp, 'STOP RING', 'stopring', '');
+        grp('PHONE LOCATION AND EMERGENCY', 'The phone must have location allowed (Settings, Emergency) and remote control on.');
+        var ge = grid(2);
+        gb(ge, 'PHONE LOCATION', 'pri', function () { toast('Asking the phone\u2026', 2000); linkSend('where', '', '', function (d) { toast(d.msg, 9000); var m = /q=([-\d.,]+)/.exec(d.msg || ''); if (d.ok && m) openLink('https://maps.google.com/?q=' + m[1]); }); });
+        send(ge, 'LOUD SIREN', 'emsound', 'siren', { cls: 'danger' }); send(ge, 'WHISTLE', 'emsound', 'whistle', {}); send(ge, 'SOS FLASHLIGHT', 'morse', 'sos', {}); send(ge, 'STOP ALL SIGNALS', 'emstop', '', {});
       }
       grp('HEALTH & HELP');
       var testBox = el('div', 'st-box'), logBox = el('div', 'st-box');
@@ -3581,7 +3685,7 @@
         updateProviderChip();
       }));
     sF.appendChild(rankBox('Web search', 'Add the built-in free search at number 1 if you want answers from it first.',
-      ['tavily', 'serpapi', 'free'], function (id) { return id === 'tavily' ? 'Tavily' : id === 'serpapi' ? 'SerpApi (Google)' : 'Built-in free web search'; }, searchAvail,
+      ['tavily', 'serpapi', 'free'], function (id) { return id === 'tavily' ? 'Tavily' : id === 'serpapi' ? 'SerpApi' : 'Built-in free web search'; }, searchAvail,
       function () { return cleanOrder(S.searchOrder, ['tavily', 'serpapi', 'free']); }, function (o) { S.searchOrder = o; }));
     body.appendChild(sF);
 
@@ -3628,14 +3732,14 @@
     LANGS.forEach(function (l) { var o = el('option'); o.value = l[0]; o.textContent = l[1]; if (S.lang === l[0]) o.selected = true; lang.appendChild(o); });
     lang.addEventListener('change', function () { S.lang = lang.value; save(); });
     var vm = el('select');
-    [['jarvis', 'Jarvis voice — deep, calm, British'], ['phone', 'Phone voice — my phone\u2019s own voice']].forEach(function (o) {
+    [['jarvis', 'Jarvis voice — deep, calm, British'], ['phone', PC ? 'PC voice — this PC\u2019s own Windows voice' : 'Phone voice — my phone\u2019s own voice']].forEach(function (o) {
       var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (S.voiceMode === o[0]) op.selected = true; vm.appendChild(op);
     });
     var vc = el('div', 'card'); vc.style.padding = '2px 14px 14px';
     vc.appendChild(field('I SPEAK TO JARVIS IN', lang));
     vc.appendChild(field('VOICE', vm));
     vc.appendChild(rangeRow('Speaking speed', 0.6, 1.5, 0.05, function () { return S.rate; }, function (v) { S.rate = v; }, function (v) { return v.toFixed(2) + '\u00d7'; }));
-    var pitchRow = rangeRow('Phone-voice pitch (lower = deeper)', 0.5, 1.4, 0.05, function () { return S.pitch; }, function (v) { S.pitch = v; }, function (v) { return v.toFixed(2); });
+    var pitchRow = rangeRow((PC ? 'PC' : 'Phone') + '-voice pitch (lower = deeper)', 0.5, 1.4, 0.05, function () { return S.pitch; }, function (v) { S.pitch = v; }, function (v) { return v.toFixed(2); });
     vc.appendChild(pitchRow);
     function syncPitch() { pitchRow.style.display = S.voiceMode === 'phone' ? '' : 'none'; }
     vm.addEventListener('change', function () { S.voiceMode = vm.value; save(); syncPitch(); });
@@ -3643,15 +3747,15 @@
     var packs = el('div', 'hint'); packs.style.cssText = 'color:var(--mute);font-size:14px;margin:8px 0;line-height:1.4'; packs.textContent = 'Checking installed voices\u2026';
     vc.appendChild(packs);
     var pkRow = el('div', 'row'); var inst = el('button', 'btn', 'INSTALL / MANAGE VOICE DATA');
-    inst.addEventListener('click', function () { B ? B.installVoices() : toast('Only on the phone'); });
+    inst.addEventListener('click', function () { if (!B) { toast('Only in the app'); return; } B.installVoices(); if (PC) { toast('Windows Speech settings opened \u2014 use Manage voices \u203a Add voices', 5000); setTimeout(checkPacks, 4000); } });
     pkRow.appendChild(inst); vc.appendChild(pkRow);
     function checkPacks() {
       if (!B || !B.voices) { packs.textContent = 'Voice check works on the phone.'; return; }
       var info; try { info = JSON.parse(B.voices()); } catch (e) { info = null; }
-      if (!info || !info.ready) { packs.textContent = 'Phone voice engine is not ready yet \u2014 reopen Settings in a moment.'; return; }
+      if (!info || !info.ready) { packs.textContent = (PC ? 'The PC voices are still loading' : 'Phone voice engine is not ready yet') + ' \u2014 reopen Settings in a moment.'; return; }
       var L = info.langs || {}, bn = L['bn-BD'] || L['bn-IN'], hi = L['hi-IN'];
       packs.innerHTML = 'Voice data \u2014 English (UK): <b>' + (L['en-GB'] ? 'installed' : 'MISSING') + '</b> \u00b7 Bangla: <b>' + (bn ? 'installed' : 'MISSING') + '</b> \u00b7 Hindi: <b>' + (hi ? 'installed' : 'MISSING') + '</b>' +
-        ((!bn || !hi || !L['en-GB']) ? '<br>Tap the button below to install the missing ones.' : '');
+        ((!bn || !hi || !L['en-GB']) ? (PC ? '<br>Tap the button: in Windows open <b>Manage voices \u203a Add voices</b>, pick the language, then reopen Settings here.' : '<br>Tap the button below to install the missing ones.') : '');
     }
     checkPacks();
     s2.appendChild(vc);
@@ -3679,33 +3783,29 @@
     STYLES.forEach(function (o) { var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((S.style || 'jarvis') === o[0]) op.selected = true; sty.appendChild(op); });
     sty.addEventListener('change', function () { S.style = sty.value; save(); toast('Reply style changed'); });
     nc.appendChild(field('REPLY STYLE', sty)); s3.appendChild(nc);
-    var ab = el('div', 'card'); ab.style.padding = '2px 14px 14px';
-    ABOUT_F.forEach(function (f) {
-      var inp = el(f[3] === 'area' ? 'textarea' : 'input'); if (f[3] !== 'area') inp.type = 'text'; else inp.rows = 2;
-      inp.placeholder = f[2]; inp.maxLength = 300; inp.value = (S.about || {})[f[0]] || ''; inp.spellcheck = false;
-      inp.addEventListener('input', function () { if (!S.about) S.about = {}; S.about[f[0]] = inp.value; save(); });
-      ab.appendChild(field(f[1], inp));
-    });
-    s3.appendChild(el('div', 'dl-note', 'ABOUT ME: tell Jarvis who you are. Everything is optional and stays encrypted on this device.'));
-    s3.appendChild(ab);
+    s3.appendChild(el('div', 'dl-note', 'ABOUT ME: what Jarvis knows about you. He fills it in by himself from our chats and keeps only the important details. Edit, delete or add lines any time. Everything stays encrypted on this device.'));
     s3.appendChild(toggleRow('Learn about me from our chats', 'Jarvis notes only the important facts you tell him (name, city, work, likes, family names…), never passwords, numbers or whole conversations. Stored on this device only.', function () { return S.learn !== false; }, function (v) { S.learn = v; }));
     var lc = el('div', 'card'); lc.style.padding = '10px 14px';
-    lc.appendChild(el('div', 'card-n', '<b>What Jarvis has learned</b><small>Edit any line, delete it, or add your own. Jarvis uses these only when you ask about yourself or when they clearly help.</small>'));
+    lc.appendChild(el('div', 'card-n', '<b>About me</b><small>Jarvis uses these only when you ask about yourself or when they clearly help an answer. Tap a line to edit it.</small>'));
     var ll = el('div'); ll.style.marginTop = '8px'; lc.appendChild(ll);
     function drawLearned() {
       ll.innerHTML = ''; var all = learnedGet();
-      if (!all.length) ll.appendChild(el('div', 'empty-note', 'Nothing yet. Say, for example, “my name is Suchock” or “I live in Dhaka” and it appears here.'));
+      if (!all.length) ll.appendChild(el('div', 'empty-note', 'Nothing yet. As you talk, Jarvis adds the important things here (for example your name, city, work or interests). You can also add them yourself below.'));
       all.forEach(function (m, idx) {
         var r = el('div'); r.style.cssText = 'display:flex;gap:6px;align-items:center;margin:5px 0';
-        var i2 = el('input'); i2.type = 'text'; i2.value = m.f; i2.maxLength = 120; i2.spellcheck = false; i2.style.flex = '1';
-        i2.addEventListener('change', function () { var a = learnedGet(); var v = i2.value.replace(/\s+/g, ' ').trim().slice(0, 120); if (v) a[idx].f = v; else a.splice(idx, 1); S.learned = a; save(); drawLearned(); });
+        var i2 = el('input'); i2.type = 'text'; i2.value = m.f; i2.maxLength = 200; i2.spellcheck = false; i2.style.flex = '1';
+        i2.addEventListener('change', function () { var a = learnedGet(); var v = i2.value.replace(/\s+/g, ' ').trim().slice(0, 200); if (v) a[idx].f = v; else a.splice(idx, 1); S.learned = a; save(); drawLearned(); });
         var x = el('button', 'btn', '✕'); x.style.cssText = 'padding:6px 12px;min-width:0'; x.setAttribute('aria-label', 'Delete');
         x.addEventListener('click', function () { var a = learnedGet(); a.splice(idx, 1); S.learned = a; save(); haptic(); drawLearned(); });
-        r.appendChild(i2); r.appendChild(x); ll.appendChild(r);
+        var wf = el('label', 'fld'); wf.style.cssText = 'flex:1;margin:0'; wf.appendChild(i2); r.appendChild(wf); r.appendChild(x); ll.appendChild(r);
       });
-      var add = el('input'); add.type = 'text'; add.placeholder = 'Add a detail, e.g. Likes: cricket  (press Enter)'; add.maxLength = 120; add.style.cssText = 'width:100%;margin-top:6px;box-sizing:border-box';
-      add.addEventListener('keydown', function (e) { if (e.key !== 'Enter') return; var v = add.value.replace(/\s+/g, ' ').trim().slice(0, 120); if (!v) return; var a = learnedGet(); a.push({ f: v, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); drawLearned(); });
-      ll.appendChild(add);
+      var add = el('input'); add.type = 'text'; add.placeholder = 'Add a detail, e.g. Likes: football'; add.maxLength = 200;
+      function addNow() { var v = add.value.replace(/\s+/g, ' ').trim().slice(0, 200); if (!v) return; var a = learnedGet(); a.push({ f: v, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); drawLearned(); }
+      add.addEventListener('keydown', function (e) { if (e.key === 'Enter') addNow(); });
+      var addRow = el('div'); addRow.style.cssText = 'display:flex;gap:6px;align-items:flex-end;margin-top:8px';
+      var addF = field('', add); addF.style.flex = '1'; addF.style.margin = '0'; addRow.appendChild(addF);
+      var addB = el('button', 'btn pri', 'ADD'); addB.style.cssText = 'padding:11px 16px;min-width:0'; addB.addEventListener('click', addNow); addRow.appendChild(addB);
+      ll.appendChild(addRow);
       if (all.length) { var cl = el('button', 'btn danger', 'CLEAR EVERYTHING LEARNED'); cl.style.marginTop = '10px'; cl.addEventListener('click', function () { if (!cl.getAttribute('data-sure')) { cl.setAttribute('data-sure', '1'); cl.textContent = 'TAP AGAIN TO CONFIRM'; return; } S.learned = []; save(); drawLearned(); }); ll.appendChild(cl); }
     }
     drawLearned(); s3.appendChild(lc);
@@ -3745,16 +3845,17 @@
     s4.appendChild(toggleRow('Call help', 'Jarvis says who is calling and lets you answer or reject by voice or by the buttons on the call notification. Asks for phone permissions. For voice answers while the screen is off, keep the floating ball on.',
       function () { try { var st = JSON.parse((B && B.callHelpState && B.callHelpState()) || '{}'); return !!(st.on && st.phone); } catch (e) { return false; } },
       function (v) { try { if (B && B.setCallHelp) { B.setCallHelp(v); if (v) toast('Allow the phone permissions that Android asks for', 4000); } else toast('Only on the phone'); } catch (e) { /* ignore */ } }));
+    s4.appendChild(toggleRow('Floating ball', 'The Jarvis bubble over other apps. Needs \u201cDisplay over other apps\u201d and the microphone.',
+      function () { try { return !!perms().ball; } catch (e) { return false; } },
+      function (v) {
+        if (!B) { toast('Only on the phone'); return; }
+        var r = B.setBall(v);
+        if (r === 'overlay') toast('Allow \u201cDisplay over other apps\u201d for Jarvis, then switch it on again', 4200);
+        else if (r === 'mic') toast('Allow the microphone, then switch it on again', 3200);
+        else toast(v ? 'Floating ball on \u2014 leave the app to see it' : 'Floating ball off', 3000);
+        setTimeout(renderPerms, 500);
+      }));
     var bb = el('div', 'row'); bb.style.margin = '0 0 10px';
-    var g4 = el('button', 'btn pri', 'FLOATING BALL ON / OFF');
-    g4.addEventListener('click', function () {
-      if (!B) { toast('Only on the phone'); return; }
-      var on = !!perms().ball, r = B.setBall(!on);
-      if (r === 'overlay') toast('Allow “Display over other apps” for Jarvis, then tap again', 4200);
-      else if (r === 'mic') toast('Allow the microphone, then tap again', 3200);
-      else { toast(on ? 'Floating ball off' : (PC ? 'Floating ball on — look at the edge of your screen' : 'Floating ball on — leave the app to see it'), 3200); setTimeout(renderPerms, 400); }
-    });
-    bb.appendChild(g4);
     var g5 = el('button', 'btn', 'KEEP JARVIS ALIVE (BATTERY)');
     g5.addEventListener('click', function () { if (!B) { toast('Only on the phone'); return; } B.requestBattery(); toast('Choose “Allow” so Android stops switching Jarvis off', 4200); });
     bb.appendChild(g5); s4.appendChild(bb);
@@ -3768,6 +3869,15 @@
     body.appendChild(buildLinkSection());
 
 
+    if (!PC) {
+      var sE = section('EMERGENCY', 'For the phone you carry everywhere. Works with no internet and uses no AI tokens.');
+      var eb = el('div', 'card'); eb.style.padding = '14px';
+      eb.appendChild(el('p', 'hint', 'Open emergency mode for a loud survival siren and whistle, SOS and Morse with the flashlight, a screen strobe, your live location, an emergency card and a survival guide. Find my phone uses the same loud siren. Say “emergency” or “SOS” any time.'));
+      var ebtn = el('button', 'btn pri', 'OPEN EMERGENCY MODE'); ebtn.addEventListener('click', function () { closeSettings(); openEmergency(); }); eb.appendChild(ebtn);
+      var lbtn = el('button', 'btn', 'ALLOW LOCATION (FOR SHARING AND THE PC MAP)'); lbtn.style.marginTop = '8px'; lbtn.addEventListener('click', function () { try { B.requestLocation(); } catch (e) { toast('Open Android settings and allow location for Jarvis.', 4000); } }); eb.appendChild(lbtn);
+      var tbtn = el('button', 'btn', 'TEST THE LOUD SIREN (3 SECONDS)'); tbtn.style.marginTop = '8px'; tbtn.addEventListener('click', function () { doAction('emsound', 'siren', ''); setTimeout(function () { doAction('emsound', 'off', ''); }, 3000); }); eb.appendChild(tbtn);
+      sE.appendChild(eb); body.appendChild(sE);
+    }
     // --- security
     var s6 = section('SECURITY', 'Your keys are stored encrypted on this phone and never leave it except to the AI service you chose.');
     if (!PC) s6.appendChild(toggleRow('Lock Jarvis with my phone’s screen lock', 'Ask for fingerprint / PIN when opening Jarvis after a minute away',
@@ -3814,7 +3924,7 @@
         '<p><b>Your own tiny AI:</b> if your AI runs on a server (your own computer, a Cloudflare Worker, Render, etc.) and answers at <code>…/v1/chat/completions</code> in the OpenAI format, put its address up to <code>/v1</code> as the Base URL, any text or your own token as the key, and its model name. Test it first in a browser or with curl.</p>' +
         '<p><b>If it fails:</b> “That address is a website, not an AI service” means the Base URL is the website address — look again in the API docs. “Not found” means a wrong model name or Base URL. “Key rejected” means the key is wrong or has spaces. Services that do not offer the OpenAI style (for example Anthropic and Gemini) already have their own cards in the list.</p>' +
         '<h4>Web search keys</h4><p>Under <b>Settings › Services</b> you can add <b>Tavily</b> and <b>SerpApi</b> (both free, no card). The <b>built-in free web search</b> needs no key. In <b>Fallback Order</b> rank them — put the built-in search first if you want answers from it first.</p>'],
-      ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p><p>For news, prices or anything recent, Jarvis searches the web by himself when a Tavily or Google search key is added.</p><p><b>Skills:</b> “add milk to my shopping list”, “show my shopping list”, “generate a password”, “start a focus session”, “choose tea or coffee”, “spell necessary”. See <b>All commands</b> for more.</p><p><b>Phone controls:</b> brightness, Do Not Disturb, camera, screenshot, alarms, Spotify, WhatsApp and email drafts, calendar events and “what is on my screen”. Android only lets you flip Wi-Fi, Bluetooth, airplane mode and similar yourself, so Jarvis opens the right switch.</p>'],
+      ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>✦ All commands</b> under the chat to see everything Jarvis understands.</p><p>For news, prices or anything recent, Jarvis searches the web by himself when a SerpApi or Tavily search key is added (a free search with no key also works).</p><p><b>Tools (no AI tokens):</b> tap <b>🧰 Tools</b> for a speed test, link safety check, QR codes, passwords, calculator, converter, Morse, timers and more. Try “speed test”, “what is 15% of 240”, “is bit.ly/abc safe”, “flip a coin”.</p>' + (PC ? '' : '<p><b>Emergency (phone):</b> say “emergency” or “SOS”, or open Settings › Emergency for the loud siren, whistle, SOS flashlight, Morse, location and a survival guide.</p>') + '<p><b>Skills:</b> “add milk to my shopping list”, “show my shopping list”, “generate a password”, “start a focus session”, “choose tea or coffee”, “spell necessary”. See <b>All commands</b> for more.</p><p><b>Phone controls:</b> brightness, Do Not Disturb, camera, screenshot, alarms, Spotify, WhatsApp and email drafts, calendar events and “what is on my screen”. Android only lets you flip Wi-Fi, Bluetooth, airplane mode and similar yourself, so Jarvis opens the right switch.</p>'],
       ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
       ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it. Turn it off in Settings › Appearance, from the tray icon, or by right-clicking the ball. It follows your colour theme.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>Floating ball on / off</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
@@ -3927,7 +4037,7 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.38.0' + (PC ? ' · PC' : '')));
+    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.39.0' + (PC ? ' · PC' : '')));
     buildSettingsMenu(body, scBox);
     renderPerms();
   }
@@ -4004,7 +4114,7 @@
   /* ------------------------------------------------------------------ wire up */
   function buildChips() {
     var items = [
-      ['✦ All commands', '__cmds'], ['◫ Dashboard', 'dashboard'], ['▥ System graphs', 'system monitor'], ['Open YouTube', 'open youtube'], ['What time is it', 'what time is it'], ['Battery level', 'battery level'],
+      ['✦ All commands', '__cmds'], ['🧰 Tools', '__tools'], ['◫ Dashboard', 'dashboard'], ['▥ System graphs', 'system monitor'], ['Open YouTube', 'open youtube'], ['What time is it', 'what time is it'], ['Battery level', 'battery level'],
       ['Flashlight on', 'flashlight on'], ['Call…', null, 'call '], ['Set a timer', 'set a timer for 5 minutes'],
       ['Tell me a joke', 'tell me a joke'], ['Navigate…', null, 'navigate to ']
     ];
@@ -4014,8 +4124,9 @@
       b.addEventListener('click', function () {
         haptic();
         if (it[1] === '__cmds') openCmds();
+        else if (it[1] === '__tools') openTools();
         else if (it[1]) handleUser(it[1], false);
-        else { textEl.value = it[2]; textEl.focus(); sendEl.classList.add('on'); }
+        else { textEl.value = it[2]; growBox(); textEl.focus(); sendEl.classList.add('on'); }
       });
       host.appendChild(b);
     });
@@ -4048,7 +4159,7 @@
     function submit() {
       var v = textEl.value.trim();
       if (!v) return;
-      textEl.value = ''; sendEl.classList.remove('on'); if (!PC) textEl.blur();      // PC: stay in the box so you can keep typing
+      textEl.value = ''; growBox(); sendEl.classList.remove('on'); if (!PC) textEl.blur();      // PC: stay in the box so you can keep typing
       handsFreeSuspended = false;
       handleUser(v, false);
     }
@@ -4067,8 +4178,8 @@
       document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('input,textarea,select,button,a,.panel,#settings,.toast')) setTimeout(typeBox, 0); });
       setTimeout(typeBox, 900);
     }
-    textEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-    textEl.addEventListener('input', function () { sendEl.classList.toggle('on', !!textEl.value.trim()); });
+    textEl.addEventListener('keydown', function (e) { if (e.key === 'Enter' && PC && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } });       // PC: Enter sends, Shift+Enter is a new line. Phone: Enter is a new line, the arrow sends
+    textEl.addEventListener('input', function () { sendEl.classList.toggle('on', !!textEl.value.trim()); growBox(); });
     textEl.addEventListener('focus', function () { setTimeout(scrollLog, 300); });
     $('#btn-settings').addEventListener('click', function () { haptic(); openSettings(); });
     $('#provider-chip').addEventListener('click', function () { openSettings(); if (showSettingsPage) showSettingsPage('NEURAL LINK'); });     // straight to the AI providers

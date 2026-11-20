@@ -35,13 +35,24 @@ final class FindPhone {
     }
 
     static synchronized boolean ringing() {
-        return mp != null;
+        return mp != null || Emergency.soundPlaying();
     }
 
     static synchronized String start(Context c) {
         c = c.getApplicationContext();
         ctxRef = c;
-        if (mp != null) return "Already ringing.";
+        if (mp != null || Emergency.soundPlaying()) return "Already ringing.";
+        if (Emergency.soundStart(c, "siren")) {
+            try {
+                Vibrator v = (Vibrator) c.getSystemService(Context.VIBRATOR_SERVICE);
+                if (v != null && v.hasVibrator()) v.vibrate(new long[]{0, 700, 500}, 0);
+            } catch (Exception ignored) {
+            }
+            notifyStop(c);
+            H.removeCallbacks(AUTO);
+            H.postDelayed(AUTO, 60000L);
+            return "Ringing the phone loudly for up to a minute.";
+        }
         try {
             AudioManager am = (AudioManager) c.getSystemService(Context.AUDIO_SERVICE);
             oldVol = am.getStreamVolume(AudioManager.STREAM_ALARM);
@@ -75,7 +86,8 @@ final class FindPhone {
     static synchronized String stop(Context c) {
         c = c.getApplicationContext();
         H.removeCallbacks(AUTO);
-        boolean was = mp != null;
+        boolean was = mp != null || Emergency.soundPlaying();
+        Emergency.soundStop();
         if (mp != null) {
             try {
                 mp.stop();

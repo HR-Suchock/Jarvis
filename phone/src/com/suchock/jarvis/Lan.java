@@ -85,7 +85,9 @@ final class Lan {
                 String[] p = h.toString().split(" ");
                 if (p.length < 5 || !"JLAN1".equals(p[0]) || !proof(token).equals(p[1])) { out.write("ERR not allowed\n".getBytes(UTF8)); return; }
                 long size = Long.parseLong(p[2]);
-                if (size <= 0 || size > 100L * 1000 * 1000) { out.write("ERR bad size\n".getBytes(UTF8)); return; }
+                if (size <= 0) { out.write("ERR bad size\n".getBytes(UTF8)); return; }
+                cacheDir.mkdirs();
+                if (cacheDir.getUsableSpace() < 2 * size + 100L * 1000 * 1000) { out.write("ERR the phone does not have enough free storage\n".getBytes(UTF8)); return; }
                 String name = dec(p[3]), mime = dec(p[4]);
                 cacheDir.mkdirs();
                 part = new File(cacheDir, "lan-" + token.substring(0, 8) + ".part");

@@ -243,6 +243,26 @@ public final class Bridge implements Voice.Emitter {
         });
     }
 
+    /** Tools panel: ping / down / up (speed test), hibp (password leak check), rates (currency). Answer arrives as a "tool" event. */
+    @JavascriptInterface
+    public void netcall(final String id, final String kind, final String arg) {
+        if (!ok()) return;
+        net.execute(new Runnable() {
+            @Override
+            public void run() {
+                JSONObject out = new JSONObject();
+                try {
+                    out.put("id", id);
+                    out.put("data", NetTools.call(kind, arg));
+                    out.put("ok", true);
+                } catch (Exception e) {
+                    fail(out, e);
+                }
+                emit("tool", out);
+            }
+        });
+    }
+
     /** provider "free" = no key; "serpapi" = SerpApi key. */
     @JavascriptInterface
     public void lsearch(final String id, final String provider, final String key, final String query) {
@@ -311,6 +331,7 @@ public final class Bridge implements Voice.Emitter {
         try {
             o.put("mic", granted(Manifest.permission.RECORD_AUDIO));
             o.put("call", granted(Manifest.permission.CALL_PHONE));
+            o.put("loc", granted(Manifest.permission.ACCESS_FINE_LOCATION));
             o.put("contacts", granted(Manifest.permission.READ_CONTACTS));
             boolean running = JarvisAccess.isRunning(), enabled = JarvisAccess.enabledInSettings(act);
             o.put("access", running || enabled);
@@ -351,6 +372,17 @@ public final class Bridge implements Voice.Emitter {
         String q = CalendarHelper.query(act.getApplicationContext(), days);
         if (q == null) return "{\"perm\":false,\"events\":[]}";
         return "{\"perm\":true,\"events\":" + q + "}";
+    }
+
+    @JavascriptInterface
+    public void requestLocation() {
+        if (!ok()) return;
+        act.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                act.requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_PERMS);
+            }
+        });
     }
 
     @JavascriptInterface
@@ -794,7 +826,6 @@ public final class Bridge implements Voice.Emitter {
     // ---------------------------------------------------------------- phone -> PC: send a photo or file
     static final int REQ_PICKFILE = 79;
     private static final long SEND_MAX = 3L * 1000 * 1000;      // pictures bigger than this are shrunk
-    private static final long FILE_LIMIT = 100L * 1000 * 1000;   // by Wi-Fi
     private static final long FB_LIMIT = 5L * 1000 * 1000;        // through Firebase
 
     @JavascriptInterface
@@ -837,7 +868,6 @@ public final class Bridge implements Voice.Emitter {
                         try { if (cu.moveToFirst()) { if (cu.getString(0) != null) name = cu.getString(0); if (!cu.isNull(1)) declared = cu.getLong(1); } } finally { cu.close(); }
                     }
                     boolean isImg = mime.startsWith("image/");
-                    if (declared > FILE_LIMIT) { fileProgress(name, 0, true, false, "That file is too big. The limit is 100 MB."); return; }
                     LinkClient c = RelayService.client;
                     if (c == null) { fileProgress(name, 0, true, false, "The device link is not running. Switch it on in Settings > Device Link."); return; }
                     fileProgress(name, 0, false, true, "Reading the file\u2026");
@@ -872,7 +902,7 @@ public final class Bridge implements Voice.Emitter {
                         total = data.length;
                     }
                     final int CH = 36000;
-                    // up to 5 MB: encrypted pieces through Firebase. Over 5 MB: straight to the PC over the same Wi-Fi (up to 100 MB).
+                    // up to 5 MB: encrypted pieces through Firebase. Over 5 MB: straight to the PC over the same Wi-Fi (any size).
                     String lan = null;
                     if (total > FB_LIMIT) {                                     // small files never look for Wi-Fi: they go straight through Firebase
                         fileProgress(name, 0, false, true, "Looking for your PC on this Wi-Fi\u2026");
@@ -1084,6 +1114,6 @@ public final class Bridge implements Voice.Emitter {
 
     @JavascriptInterface
     public String appInfo() {
-        return "{\"version\":\"1.38.0\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
+        return "{\"version\":\"1.39.0\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
     }
 }

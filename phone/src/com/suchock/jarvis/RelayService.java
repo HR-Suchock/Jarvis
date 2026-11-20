@@ -95,7 +95,7 @@ public final class RelayService extends Service {
     private static String tier(String t) {
         if ("open".equals(t) || "youtube".equals(t) || "search".equals(t) || "url".equals(t) || "navigate".equals(t) || "map".equals(t)
                 || "torch".equals(t) || "volume".equals(t) || "media".equals(t) || "battery".equals(t) || "timer".equals(t)
-                || "alarm".equals(t) || "settings".equals(t) || "findphone".equals(t) || "stopring".equals(t) || "notify".equals(t) || "setclip".equals(t) || "calendar".equals(t) || "clock".equals(t) || "brightness".equals(t) || "dnd".equals(t) || "ringer".equals(t) || "clockui".equals(t) || "calins".equals(t) || "spotify".equals(t) || "mailto".equals(t) || "filepart".equals(t) || "lanoffer".equals(t)) return "ctl";
+                || "alarm".equals(t) || "settings".equals(t) || "findphone".equals(t) || "where".equals(t) || "emsound".equals(t) || "emstop".equals(t) || "stopring".equals(t) || "notify".equals(t) || "setclip".equals(t) || "calendar".equals(t) || "clock".equals(t) || "brightness".equals(t) || "dnd".equals(t) || "ringer".equals(t) || "clockui".equals(t) || "calins".equals(t) || "spotify".equals(t) || "mailto".equals(t) || "filepart".equals(t) || "lanoffer".equals(t)) return "ctl";
         if ("type".equals(t) || "key".equals(t) || "tap".equals(t) || "scroll".equals(t) || "swipe".equals(t)
                 || "align".equals(t) || "playnth".equals(t) || "camera".equals(t) || "screentext".equals(t)) return "input";
         if ("call".equals(t) || "sms".equals(t) || "callanswer".equals(t) || "callreject".equals(t) || "whatsapp".equals(t) || "redial".equals(t)) return "danger";

@@ -258,6 +258,8 @@
     wakeSet: function (on) { wakeOn = !!on; wakeRefresh(); },
     quitApp: function () { P.quitApp(); },
     screenShot: function () { return P.screenShot(); },
+    screenQr: function () { return P.screenQr(); },
+    netcall: function (id, kind, arg) { P.netcall({ id: id, kind: kind, arg: arg }); },
     clapSet: function (on) { var was = clapOn; clapOn = !!on; if (was !== clapOn) wakeStop(); wakeRefresh(); },
     detectSens: function (n) { n = Math.max(1, Math.min(5, n | 0)); sensF = [1.5, 1.1, 0.85, 0.62, 0.42][n - 1]; },
     wakePause: function (p) { wakePaused = !!p; },
@@ -267,7 +269,7 @@
       var arr = vs.map(function (v) { var l = String(v.lang || '').replace('_', '-'); Object.keys(langs).forEach(function (k) { if (l.toLowerCase().indexOf(k.split('-')[0]) === 0) langs[k] = true; }); return { name: v.name, locale: l, quality: 400, network: !v.localService }; });
       return J({ voices: arr, langs: langs, ready: vs.length > 0 });
     },
-    installVoices: function () { try { P.action('settings', 'sound', ''); } catch (e) { /* */ } },
+    installVoices: function () { try { P.action('settings', 'speech', ''); } catch (e) { /* */ } },
     // network services (answers come back as native events)
     chat: function (id, type, baseUrl, key, model, messagesJson, system) { P.chat({ id: id, type: type, baseUrl: baseUrl, key: key, model: model, messagesJson: messagesJson, system: system }); },
     listModels: function (id, type, baseUrl, key) { P.models({ id: id, type: type, baseUrl: baseUrl, key: key }); },

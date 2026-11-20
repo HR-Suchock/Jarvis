@@ -87,11 +87,11 @@ svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-l
 
 /* ---------- dock ---------- */
 .dock{flex:0 0 auto;display:flex;align-items:center;gap:12px}
-.input-wrap{flex:1;display:flex;align-items:center;border:1px solid var(--line2);background:rgba(4,24,36,.75);height:52px;
+.input-wrap{flex:1;display:flex;align-items:flex-end;border:1px solid var(--line2);background:rgba(4,24,36,.75);min-height:52px;
   clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px);padding-left:16px}
-.input-wrap input{flex:1;min-width:0;background:none;border:0;outline:0;color:var(--tx);font-size:17px;font-weight:500}
-.input-wrap input::placeholder{color:var(--mute);opacity:.8}
-.send-btn{width:46px;height:46px;display:grid;place-items:center;color:var(--cy);opacity:.4;transition:opacity .2s}
+.input-wrap input,.input-wrap textarea{flex:1;min-width:0;background:none;border:0;outline:0;color:var(--tx);font-size:17px;font-weight:500;font-family:inherit;resize:none;line-height:1.35;padding:14px 0;height:52px;max-height:40vh;overflow-y:auto;box-sizing:border-box;scrollbar-width:thin}
+.input-wrap input::placeholder,.input-wrap textarea::placeholder{color:var(--mute);opacity:.8}
+.send-btn{flex:0 0 auto;width:46px;height:46px;display:grid;place-items:center;color:var(--cy);opacity:.4;transition:opacity .2s}
 .send-btn.on{opacity:1}.send-btn svg{width:22px;height:22px}
 .mic{position:relative;width:64px;height:64px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;color:#02121a;
   background:radial-gradient(circle at 35% 30%,var(--cyhi),var(--cy) 60%,var(--cylo));box-shadow:0 0 22px rgba(var(--cyrgb),.55),inset 0 0 12px rgba(255,255,255,.35);
@@ -563,9 +563,9 @@ html.pc-app .dock{flex-direction:column;gap:8px;padding:6px 0 4px}
 html.pc-app .dock .mic{order:1;width:92px;height:92px}
 html.pc-app .dock .mic svg{width:40px;height:40px}
 html.pc-app .dock .miclab{order:2;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:.28em;color:var(--mute);text-align:center}
-html.pc-app .dock .input-wrap{order:3;flex:none;width:min(520px,60vw);height:40px;opacity:.85}
-html.pc-app .dock .input-wrap input{font-size:15px}
-html.pc-app.chat-open .dock .input-wrap{position:fixed;right:14px;bottom:12px;width:calc(min(440px,42vw) - 28px);z-index:7;opacity:1;height:46px}
+html.pc-app .dock .input-wrap{order:3;flex:none;width:min(520px,60vw);min-height:40px;opacity:.85}
+html.pc-app .dock .input-wrap textarea{font-size:15px;padding:9px 0;height:40px;max-height:34vh}
+html.pc-app.chat-open .dock .input-wrap{position:fixed;right:14px;bottom:12px;width:calc(min(440px,42vw) - 28px);z-index:7;opacity:1;min-height:46px}
 html.pc-app .chatbtn{cursor:pointer;position:relative}
 html.pc-app .chatbtn.on{background:rgba(var(--cyrgb),.22);color:#fff}
 .chatbtn .cdot{display:inline-block;width:7px;height:7px;margin-left:6px;border-radius:50%;background:var(--am);box-shadow:0 0 8px var(--am);vertical-align:middle}

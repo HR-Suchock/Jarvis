@@ -121,6 +121,19 @@ final class Actions {
                 case "scroll": return scroll(arg, arg2);
                 case "findphone": { String m = FindPhone.start(ctx); return res(m.startsWith("Ringing") || m.startsWith("Already"), m); }
                 case "stopring": return res(true, FindPhone.stop(ctx));
+                case "emsound": {
+                    if ("off".equals(arg)) { Emergency.soundStop(); return res(true, "Alarm stopped."); }
+                    String k = "whistle".equals(arg) ? "whistle" : "siren";
+                    return Emergency.soundStart(ctx, k) ? res(true, "Loud " + k + " is on. It stops by itself after 5 minutes.") : res(false, "I could not start the alarm sound.");
+                }
+                case "morse": {
+                    if ("stop".equals(arg)) { Emergency.morseStop(); return res(true, "Flashlight signal stopped."); }
+                    String m = "sos".equals(arg) ? "... --- ..." : arg;
+                    String er = Emergency.morseStart(ctx, m, "loop".equals(arg2) || "sos".equals(arg));
+                    return er == null ? res(true, "Signalling with the flashlight.") : res(false, er);
+                }
+                case "emstop": { Emergency.soundStop(); Emergency.morseStop(); Emergency.trackStop(); FindPhone.stop(ctx); return res(true, "All emergency signals are off."); }
+                case "where": return where();
                 case "notify": return notifyMsg(arg);
                 case "setclip": return setClip(arg);
                 case "calendar": return calendarJson(arg);
@@ -602,6 +615,25 @@ final class Actions {
         if (!u.matches("(?i)^https?://[^\\s]+$")) return res(false, "I only open web links (http or https).");
         start(new Intent(Intent.ACTION_VIEW, Uri.parse(u)));
         return res(true, "Opening " + u + ".");
+    }
+
+    private String where() {
+        Emergency.remember(ctx);
+        if (!Emergency.hasLocationPermission(ctx)) return res(false, "Location permission is off. Allow it in Jarvis Settings, Emergency.");
+        Emergency.trackStart(ctx);
+        String f = Emergency.lastFix();
+        String bat = "";
+        try {
+            android.content.Intent b = ctx.registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (b != null) {
+                int lv = b.getIntExtra("level", -1), sc = b.getIntExtra("scale", 100);
+                bat = " Battery " + (lv * 100 / Math.max(1, sc)) + "%" + (b.getIntExtra("plugged", 0) != 0 ? " (charging)." : ".");
+            }
+        } catch (Exception ignored) {
+        }
+        if (f == null) return res(true, "No location fix yet. Make sure location is switched on; I am searching now, ask again in a few seconds." + bat);
+        String[] a = f.split("\\|");
+        return res(true, "Phone location: " + a[0] + " (accuracy " + a[1] + " m, " + a[2] + " s ago). Map: https://maps.google.com/?q=" + a[0] + "." + bat);
     }
 
     private String torch(String state) {
