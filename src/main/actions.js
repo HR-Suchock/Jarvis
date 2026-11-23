@@ -31,13 +31,19 @@ const APPS = {
   gmail: { url: 'https://mail.google.com' }, google: { url: 'https://www.google.com' }, facebook: { url: 'https://www.facebook.com' },
   instagram: { url: 'https://www.instagram.com' }, twitter: { url: 'https://x.com' }, x: { url: 'https://x.com' }, github: { url: 'https://github.com' },
   chatgpt: { url: 'https://chatgpt.com' }, claude: { url: 'https://claude.ai' }, gemini: { url: 'https://gemini.google.com' }, netflix: { url: 'https://www.netflix.com' },
+  'sticky notes': { uri: 'ms-stickynotes:' }, 'voice recorder': { uri: 'ms-callrecording:' }, 'sound recorder': { uri: 'ms-callrecording:' }, alarms: { uri: 'ms-clock:' }, weather: { uri: 'msnweather:' }, news: { uri: 'bingnews:' },
+  'screen snip': { uri: 'ms-screenclip:' }, 'phone link': { uri: 'ms-phonelink:' }, 'microsoft teams': { uri: 'msteams:' }, 'device manager': { exe: 'devmgmt.msc' }, 'disk management': { exe: 'diskmgmt.msc' }, services: { exe: 'services.msc' },
+  'registry editor': { exe: 'regedit.exe' }, 'system information': { exe: 'msinfo32.exe' }, 'resource monitor': { exe: 'resmon.exe' }, 'character map': { exe: 'charmap.exe' }, 'on screen keyboard': { exe: 'osk.exe' }, magnifier: { exe: 'magnify.exe' },
+  'remote desktop': { exe: 'mstsc.exe' }, 'disk cleanup': { exe: 'cleanmgr.exe' }, 'windows media player': { exe: 'wmplayer.exe' }, 'onedrive': { exe: 'onedrive.exe' }, 'adobe reader': { exe: 'acrord32.exe' }, 'notepad++': { exe: 'notepad++.exe' },
   downloads: { dir: 'downloads' }, documents: { dir: 'documents' }, pictures: { dir: 'pictures' }, music: { dir: 'music' }, videos: { dir: 'videos' }, desktop: { dir: 'desktop' },
 };
 // friendly name -> process image name (for "close X")
 const PROCS = { chrome: 'chrome', 'google chrome': 'chrome', edge: 'msedge', 'microsoft edge': 'msedge', firefox: 'firefox', notepad: 'notepad', calculator: 'CalculatorApp',
   word: 'winword', excel: 'excel', powerpoint: 'powerpnt', spotify: 'spotify', discord: 'discord', vlc: 'vlc', zoom: 'zoom', telegram: 'telegram', paint: 'mspaint',
   explorer: 'explorer', 'task manager': 'taskmgr', vscode: 'code', 'vs code': 'code', 'visual studio code': 'code', brave: 'brave', opera: 'opera', steam: 'steam' };
-const ALIASES = { yt: 'youtube', fb: 'facebook', insta: 'instagram', 'whats app': 'whatsapp', 'google maps': 'maps', 'file manager': 'explorer', 'my computer': 'this pc', 'note': 'notepad' };
+const ALIASES = { yt: 'youtube', fb: 'facebook', insta: 'instagram', 'whats app': 'whatsapp', 'google maps': 'maps', 'file manager': 'explorer', 'my computer': 'this pc', 'note': 'notepad', 'text editor': 'notepad', 'ms word': 'word', 'msword': 'word', 'ms excel': 'excel', 'ms powerpoint': 'powerpoint', 'ppt': 'powerpoint', 'ms paint': 'paint',
+  'windows explorer': 'explorer', 'file explorer': 'explorer', 'taskmgr': 'task manager', 'task mgr': 'task manager', 'command line': 'command prompt', 'dos': 'command prompt', 'win settings': 'settings', 'pc settings': 'settings',
+  'insta gram': 'instagram', 'face book': 'facebook', 'vs': 'vscode', 'code editor': 'vscode', 'browser': 'chrome', 'web browser': 'chrome', 'internet': 'chrome', 'music player': 'spotify', 'video player': 'vlc', 'screenshot tool': 'snipping tool', 'snip': 'snipping tool' };
 
 const SETTINGS = { wifi: 'ms-settings:network-wifi', bluetooth: 'ms-settings:bluetooth', display: 'ms-settings:display', sound: 'ms-settings:sound', location: 'ms-settings:privacy-location',
   defaultapps: 'ms-settings:defaultapps', accessibility: 'ms-settings:easeofaccess', main: 'ms-settings:' };
@@ -253,20 +259,46 @@ function createActions(deps) {
     ps(psSendKeys, unit.repeat(n));
     return res(true, 'Scrolled ' + a + '.');
   }
+  // Puts the words in the clipboard, brings the right window to the front (the named app, or the window you were using before Jarvis), then pastes.
+  const psPaste = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName Microsoft.VisualBasic",
+    "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class JF{[DllImport(\"user32.dll\")]public static extern IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);}'",
+    "$hint = $env:JARVIS_ARG",
+    "try {",
+    "  if ($hint) {",
+    "    $end = (Get-Date).AddSeconds(10); $ok = $false",
+    "    while ((Get-Date) -lt $end -and -not $ok) {",
+    "      $p = Get-Process | Where-Object { $_.MainWindowTitle -and ($_.ProcessName -like ('*' + $hint + '*') -or $_.MainWindowTitle -like ('*' + $hint + '*')) } | Select-Object -First 1",
+    "      if ($p) { try { [Microsoft.VisualBasic.Interaction]::AppActivate($p.Id); $ok = $true } catch { } }",
+    "      if (-not $ok) { Start-Sleep -Milliseconds 400 }",
+    "    }",
+    "    Start-Sleep -Milliseconds 700",
+    "  } else {",
+    "    $fg = [JF]::GetForegroundWindow(); $fp = [uint32]0; [void][JF]::GetWindowThreadProcessId($fg, [ref]$fp)",
+    "    $n = (Get-Process -Id $fp -ErrorAction SilentlyContinue).ProcessName",
+    "    if ($n -match 'Jarvis|electron') { [System.Windows.Forms.SendKeys]::SendWait('%{TAB}'); Start-Sleep -Milliseconds 600 }",
+    "  }",
+    "} catch { }",
+    "[System.Windows.Forms.SendKeys]::SendWait('^v')",
+  ].join('\n');
   function typeText(text, app) {
     if (!win) return res(false, 'Typing into apps works on Windows.');
     text = esc(text);
     if (!text) return res(false, 'There is nothing to type.');
     if (text.length > 20000) return res(false, 'That is too long to type in one go.');
-    let delay = 150;
-    if (esc(app).trim()) { const r = openApp(app); if (!r.ok) return r; delay = 2200; }
+    const appName = esc(app).trim();
+    let hint = '';
+    if (appName) {
+      const r = openApp(appName); if (!r.ok) return r;
+      let n = safeName(appName).replace(/^(the|my)\s+/, ''); n = ALIASES[n] || n;
+      hint = String(PROCS[n] || n).replace(/[^A-Za-z0-9 ]/g, '').trim();
+    }
     const old = d.clipboard.readText();
-    setTimeout(() => {
-      d.clipboard.writeText(text);
-      ps(psSendKeys, '^v');
-      setTimeout(() => { try { d.clipboard.writeText(old); } catch (e) { /* ignore */ } }, 1500);
-    }, delay);
-    return res(true, esc(app).trim() ? 'Typing it into ' + esc(app).trim() + '.' : 'Typing.');
+    d.clipboard.writeText(text);
+    ps(psPaste, hint);
+    setTimeout(() => { try { d.clipboard.writeText(old); } catch (e) { /* ignore */ } }, appName ? 16000 : 6000);
+    return res(true, appName ? 'Typing it into ' + appName + '.' : 'Typing.');
   }
 
   // ---- power ---------------------------------------------------------------------------------------------------

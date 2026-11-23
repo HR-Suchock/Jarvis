@@ -90,7 +90,7 @@
     else if (ev === 'status') say(d.text);
     else if (ev === 'theme') theme(d.name);
     else if (ev === 'focus') setFocus(d.end);
-    else if (ev === 'ring') { $('find-l').textContent = d.on ? 'STOP RINGING' : 'LOCATE PHONE'; $('m-find').classList.toggle('run', !!d.on); }
+    else if (ev === 'ring') { $('find-l').textContent = d.on ? 'STOP RINGING' : 'FIND MY PHONE'; $('m-find').classList.toggle('run', !!d.on); }
     else if (ev === 'inputfocus') { setTimeout(function () { q.focus(); }, 40); }
   });
   // click = open/close, drag = move (a 5 px threshold tells them apart)

@@ -115,7 +115,7 @@ function send(offerText, src, name, mime) {
       sock.setTimeout(60000, () => fin({ ok: false, msg: 'Wi-Fi transfer timed out', partial: true }));
       const enc = crypto.createCipheriv('aes-256-ctr', keyOf(token), ivOf(token)), hash = crypto.createHash('sha256');
       sock.write('JLAN1 ' + proofOf(token) + ' ' + size + ' ' + b64u(name) + ' ' + b64u(mime) + '\n');
-      const drain = () => new Promise((r) => { sock.once('drain', r); sock.once('close', r); });
+      const drain = () => new Promise((r) => { const d = () => { sock.removeListener('drain', d); sock.removeListener('close', d); r(); }; sock.on('drain', d); sock.on('close', d); });
       (async () => {
         try {
           let sent = 0;

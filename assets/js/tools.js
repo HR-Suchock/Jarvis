@@ -173,6 +173,26 @@
     return { bits: bits, label: bits < 28 ? 'Very weak' : bits < 45 ? 'Weak' : bits < 60 ? 'Okay' : bits < 80 ? 'Strong' : 'Very strong', tips: tips };
   }
 
+
+  /* ------------------------------------------------ icons (line style, no emoji) */
+  var ICONS = {
+    speed: '<path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4-5"/><circle cx="12" cy="16" r="1"/>',
+    url: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+    qr: '<rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 14h2v2M14 18h2v2h4v-2"/>',
+    code: '<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/>',
+    convert: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
+    morse: '<circle cx="5" cy="12" r="1.3"/><path d="M10 12h4M17 12h3"/>',
+    life: '<rect x="5" y="3" width="14" height="18" rx="1"/><path d="M8 8h8M8 12h3M8 16h3M14 12h2M14 16h2"/>',
+    clocks: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>',
+    pc: '<rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/>',
+    cmds: '<path d="M5 7h14M5 12h14M5 17h9"/>',
+    tools: '<path d="M14 6a4 4 0 0 0 4 4l-9 9a2 2 0 0 1-3-3l9-9a4 4 0 0 0-1-1z"/><path d="M14 6l3-3 3 3-3 3"/>',
+    dash: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="5"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="11" width="7" height="9"/>',
+    graph: '<path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-6"/>',
+    alert: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/>'
+  };
+  function ic(n) { return ICONS[n] ? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[n] + '</svg>' : ''; }
+
   /* ------------------------------------------------ views */
   function view(title, build) {
     stopTick(); abort = false; var b = panel.body; b.innerHTML = ''; current = title;
@@ -186,7 +206,7 @@
   function reg(id, icon, name, desc, pcOnly, build) { TOOLS.push({ id: id, icon: icon, name: name, desc: desc, pcOnly: pcOnly, build: build }); }
 
   /* speed */
-  reg('speed', '⚡', 'Network speed', 'Download, upload and ping', false, function (b) {
+  reg('speed', 'speed', 'Network speed', 'Download, upload and ping', false, function (b) {
     var big = h('div'); big.style.cssText = 'text-align:center;margin:14px 0'; big.innerHTML = '<div id="tl-sp" style="font-family:Orbitron,sans-serif;font-size:44px;color:var(--cy2)">—</div><div id="tl-sl" style="color:var(--mute)">Tap START</div>';
     var res = out(); res.innerHTML = '<small style="color:var(--mute)">Uses about 40 MB of data. Do it on Wi-Fi or a plan you can spare.</small>';
     var go = btn('START SPEED TEST', run, 'pri'); b.appendChild(big); b.appendChild(go); b.appendChild(res);
@@ -212,7 +232,7 @@
   });
 
   /* url */
-  reg('url', '🛡', 'Link safety check', 'Is this link a scam?', false, function (b) {
+  reg('url', 'url', 'Link safety check', 'Is this link a scam?', false, function (b) {
     var i = inp('text', 'Paste a link, e.g. bit.ly/…'), o = out(); o.textContent = 'Paste a link and tap CHECK. Nothing is opened and nothing is sent anywhere.';
     b.appendChild(fld('LINK', i)); var r = row(); r.appendChild(btn('CHECK', function () { show(urlCheck(i.value)); }, 'pri')); r.appendChild(btn('PASTE', function () { if (host.paste) host.paste().then(function (t) { if (t) { i.value = t; show(urlCheck(t)); } }); })); b.appendChild(r); b.appendChild(o);
     function show(x) {
@@ -227,17 +247,32 @@
     cv.width = cv.height = size; var c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, size, size); c.fillStyle = '#000';
     for (var r = 0; r < n; r++) for (var q = 0; q < n; q++) if (qr.isDark(r, q)) c.fillRect((q + 4) * px, (r + 4) * px, px, px);
   }
-  reg('qr', '▦', 'QR codes', 'Make a QR and check scanned ones', false, function (b) {
+  function saveCanvas(cv, name) {
+    var url = cv.toDataURL('image/png');
+    if (host.saveImage) { host.saveImage(name, url); return; }
+    var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); host.toast('Saved to your Downloads folder', 2500);
+  }
+  reg('qr', 'qr', 'QR codes', 'Make a QR and check scanned ones', false, function (b) {
     var tabs = row(), body = h('div'); b.appendChild(tabs); b.appendChild(body);
-    var t1 = btn('MAKE', function () { make(); }, 'pri'), t2 = btn('WI-FI QR', function () { wifi(); }), t3 = btn('SCAN MY SCREEN', function () { scan(); });
-    tabs.appendChild(t1); tabs.appendChild(t2); if (host.PC) tabs.appendChild(t3);
-    function mark(t) { [t1, t2, t3].forEach(function (x) { x.classList.toggle('pri', x === t); }); body.innerHTML = ''; }
-    function show(text) { var cv = h('canvas'); cv.style.cssText = 'max-width:100%;background:#fff;display:block;margin:10px auto;image-rendering:pixelated'; try { drawQr(text, cv); body.appendChild(cv); } catch (e) { body.appendChild(out()).textContent = 'That text is too long for a QR code.'; } }
+    var t1 = btn('TEXT OR LINK', function () { make(); }, 'pri'), t2 = btn('WI-FI', function () { wifi(); }), t4 = btn('CONTACT', function () { contact(); }), t3 = btn('SCAN MY SCREEN', function () { scan(); });
+    tabs.appendChild(t1); tabs.appendChild(t2); tabs.appendChild(t4); if (host.PC) tabs.appendChild(t3);
+    function mark(t) { [t1, t2, t3, t4].forEach(function (x) { x.classList.toggle('pri', x === t); }); body.innerHTML = ''; }
+    function show(text) {
+      var cv = h('canvas'); cv.style.cssText = 'max-width:100%;background:#fff;display:block;margin:10px auto;image-rendering:pixelated';
+      try { drawQr(text, cv); body.appendChild(cv); } catch (e) { body.appendChild(out()).textContent = 'That text is too long for a QR code.'; return; }
+      var r = row(); r.appendChild(btn('SAVE AS PICTURE', function () { saveCanvas(cv, 'jarvis-qr-' + Date.now() + '.png'); }, 'pri')); r.appendChild(copyBtn(function () { return text; })); body.appendChild(r);
+    }
     function make() { mark(t1); var i = h('textarea'); i.placeholder = 'Text or link'; i.style.minHeight = '80px'; body.appendChild(fld('TEXT OR LINK', i)); var holder = h('div'); body.appendChild(btn('MAKE QR', function () { holder.innerHTML = ''; if (!i.value.trim()) return; var save = body; body = holder; show(i.value.trim().slice(0, 1200)); body = save; }, 'pri')); body.appendChild(holder); }
     function wifi() {
       mark(t2); var s = inp('text', 'Wi-Fi name'), p = inp('text', 'Password'), t = sel([['WPA', 'WPA / WPA2 / WPA3'], ['WEP', 'WEP'], ['nopass', 'No password']]); body.appendChild(fld('NETWORK NAME', s)); body.appendChild(fld('PASSWORD', p)); body.appendChild(fld('SECURITY', t));
       var holder = h('div'); body.appendChild(btn('MAKE WI-FI QR', function () { holder.innerHTML = ''; if (!s.value) return; var q = function (x) { return x.replace(/([\;,:"])/g, '\\$1'); }; var save = body; body = holder; show('WIFI:T:' + t.value + ';S:' + q(s.value) + ';P:' + q(p.value) + ';;'); body = save; }, 'pri')); body.appendChild(holder);
       body.appendChild(h('small', '', 'Friends scan it with their camera to join your Wi-Fi. Nothing is stored.'));
+    }
+    function contact() {
+      mark(t4); var n = inp('text', 'Full name'), ph = inp('tel', 'Phone number'), em = inp('email', 'Email (optional)'), cp = inp('text', 'Company (optional)');
+      body.appendChild(fld('NAME', n)); body.appendChild(fld('PHONE', ph)); body.appendChild(fld('EMAIL', em)); body.appendChild(fld('COMPANY', cp));
+      var holder = h('div'); body.appendChild(btn('MAKE CONTACT QR', function () { holder.innerHTML = ''; if (!n.value.trim() && !ph.value.trim()) return; var save = body; body = holder; show('BEGIN:VCARD\nVERSION:3.0\nFN:' + n.value.trim() + '\nTEL:' + ph.value.trim() + (em.value.trim() ? '\nEMAIL:' + em.value.trim() : '') + (cp.value.trim() ? '\nORG:' + cp.value.trim() : '') + '\nEND:VCARD'); body = save; }, 'pri')); body.appendChild(holder);
+      body.appendChild(h('small', '', 'Scanning it with a phone camera offers to save the contact.'));
     }
     function result(text) {
       var o = out(); body.appendChild(o); var isUrl = /^(https?:\/\/|www\.)/i.test(text), x = isUrl ? urlCheck(text) : null;
@@ -254,35 +289,6 @@
     panel.scanFromHome = scan;
   });
 
-  /* passwords */
-  reg('pass', '🔐', 'Passwords', 'Make, test and leak-check', false, function (b) {
-    var len = inp('number', '', '16'); len.min = 8; len.max = 64; var o = out(); o.style.fontFamily = 'monospace'; o.style.fontSize = '18px'; o.textContent = '—';
-    var opts = { lower: true, upper: true, digit: true, sym: true }, r1 = row();
-    [['lower', 'abc'], ['upper', 'ABC'], ['digit', '123'], ['sym', '#$!']].forEach(function (k) { var bt = btn(k[1], function () { opts[k[0]] = !opts[k[0]]; bt.classList.toggle('pri', opts[k[0]]); }, 'pri'); r1.appendChild(bt); });
-    b.appendChild(fld('LENGTH (8–64)', len)); b.appendChild(r1);
-    var r2 = row(); r2.appendChild(btn('GENERATE', function () { var n = Math.max(8, Math.min(64, parseInt(len.value, 10) || 16)); o.textContent = genPass(n, opts); }, 'pri')); r2.appendChild(copyBtn(function () { return o.textContent; })); b.appendChild(r2); b.appendChild(o);
-    b.appendChild(h('div', '', '<br><b style="color:var(--cy2);letter-spacing:.1em">TEST A PASSWORD</b>'));
-    var t = inp('text', 'Type a password to test'), so = out(), lo = out(); so.textContent = 'Tested here on your device only.'; lo.style.display = 'none';
-    t.addEventListener('input', function () { var s = strength(t.value); so.innerHTML = t.value ? '<b>' + s.label + '</b> · about ' + Math.round(s.bits) + ' bits<br><span style="color:var(--mute)">' + esc(s.tips.join(' ')) + '</span>' : 'Tested here on your device only.'; });
-    b.appendChild(fld('PASSWORD', t)); b.appendChild(so);
-    var chk = btn('HAS IT LEAKED?', async function () {
-      if (!t.value) return; lo.style.display = ''; lo.textContent = 'Checking…';
-      try { var hs = sha1(t.value).toUpperCase(), d = await host.net('hibp', hs.slice(0, 5)), m = new RegExp('^' + hs.slice(5) + ':(\\d+)', 'mi').exec(d.text);
-        lo.innerHTML = m && +m[1] > 0 ? '<b style="color:var(--bad)">Found in ' + (+m[1]).toLocaleString() + ' known leaks.</b> Do not use it anywhere.' : '<b style="color:var(--ok)">Not found in known leaks.</b> That is good, but still use a different password for every account.';
-      } catch (e) { lo.textContent = (e && e.message) || 'Could not check. Try again with internet.'; }
-    }); b.appendChild(chk); b.appendChild(lo);
-    b.appendChild(h('small', '', 'Only the first 5 letters of a one-way hash are sent (k-anonymity), never your password.'));
-  });
-
-  /* calculator */
-  reg('calc', '🧮', 'Calculator', 'Maths, percentages, brackets', false, function (b) {
-    var i = inp('text', 'e.g. (12+8)*3 or 15% of 240 or sqrt(81)'), o = out(), hist = [];
-    o.style.fontSize = '24px'; o.textContent = '0'; i.setAttribute('inputmode', 'text');
-    function go() { var v = calcLine(i.value); if (v == null) { o.textContent = 'Not a valid sum'; return; } o.textContent = v; hist.unshift(i.value + ' = ' + v); hl.innerHTML = hist.slice(0, 8).map(function (x) { return '<div>' + esc(x) + '</div>'; }).join(''); }
-    i.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
-    b.appendChild(fld('SUM', i)); var r = row(); r.appendChild(btn('=', go, 'pri')); ['+', '-', '×', '÷', '(', ')', '%', '^'].forEach(function (k) { r.appendChild(btn(k, function () { i.value += k; i.focus(); })); }); r.appendChild(btn('C', function () { i.value = ''; o.textContent = '0'; })); b.appendChild(r); b.appendChild(o);
-    var hl = h('div'); hl.style.cssText = 'color:var(--mute);font-size:15px;margin-top:8px'; b.appendChild(hl);
-  });
   function calcLine(t) {                       // understands "15% of 240", "20 percent of 50", then plain sums
     var s = String(t).toLowerCase().trim(), m;
     if ((m = /^([\d.]+)\s*(?:%|percent)\s*of\s*([\d.]+)$/.exec(s))) return fmt(+m[1] * +m[2] / 100);
@@ -293,7 +299,7 @@
 
   /* converter */
   var rates = null;
-  reg('convert', '⇄', 'Converter', 'Units and currency', false, function (b) {
+  reg('convert', 'convert', 'Converter', 'Units and currency', false, function (b) {
     var cats = Object.keys(UNITS).concat(['Currency']), cs = sel(cats), v = inp('number', 'Amount', '1'), f = sel([]), t = sel([]), o = out(), st = h('small', '', '');
     v.setAttribute('inputmode', 'decimal'); b.appendChild(fld('TYPE', cs)); b.appendChild(fld('AMOUNT', v)); var rw = row(); rw.style.alignItems = 'flex-end'; var f1 = fld('FROM', f), t1 = fld('TO', t); f1.style.flex = t1.style.flex = '1'; rw.appendChild(f1); rw.appendChild(btn('⇅', function () { var x = f.value; f.value = t.value; t.value = x; calcNow(); })); rw.appendChild(t1); b.appendChild(rw); b.appendChild(o); b.appendChild(st);
     function fill() {
@@ -315,7 +321,7 @@
   });
 
   /* morse */
-  reg('morse', '•–', 'Morse code', 'Translate and play', false, function (b) {
+  reg('morse', 'morse', 'Morse code', 'Translate and play', false, function (b) {
     var tx = h('textarea'), mo = h('textarea'); tx.placeholder = 'Type text'; mo.placeholder = 'Morse: . - with spaces, / between words'; tx.style.minHeight = mo.style.minHeight = '70px';
     var dot = h('div'); dot.style.cssText = 'height:70px;margin:10px 0;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;color:var(--mute);letter-spacing:.2em;transition:background .05s'; dot.textContent = 'PLAYS HERE';
     var stopFn = null;
@@ -328,8 +334,89 @@
     panel.cleanup = function () { if (stopFn) stopFn(); };
   });
 
+  /* ------------------------------------------------ encoders and decoders */
+  function md5(str) {
+    var x = [], k, AA, BB, CC, DD, a, b, c, d, s = utf8(str), n = s.length;
+    function rl(v, s2) { return (v << s2) | (v >>> (32 - s2)); }
+    function ad(x1, y) { return (x1 + y) | 0; }
+    function cm(q, a1, b1, x1, s2, t) { return ad(rl(ad(ad(a1, q), ad(x1, t)), s2), b1); }
+    function ff(a1, b1, c1, d1, x1, s2, t) { return cm((b1 & c1) | (~b1 & d1), a1, b1, x1, s2, t); }
+    function gg(a1, b1, c1, d1, x1, s2, t) { return cm((b1 & d1) | (c1 & ~d1), a1, b1, x1, s2, t); }
+    function hh(a1, b1, c1, d1, x1, s2, t) { return cm(b1 ^ c1 ^ d1, a1, b1, x1, s2, t); }
+    function ii(a1, b1, c1, d1, x1, s2, t) { return cm(c1 ^ (b1 | ~d1), a1, b1, x1, s2, t); }
+    var w = []; for (k = 0; k < n; k++) w[k >> 2] |= s.charCodeAt(k) << ((k % 4) * 8);
+    w[n >> 2] |= 0x80 << ((n % 4) * 8); w[(((n + 8) >> 6) << 4) + 14] = n * 8;
+    a = 1732584193; b = -271733879; c = -1732584194; d = 271733878;
+    for (k = 0; k < w.length; k += 16) {
+      x = w.slice(k, k + 16); for (var q = 0; q < 16; q++) if (x[q] === undefined) x[q] = 0;
+      AA = a; BB = b; CC = c; DD = d;
+      a = ff(a, b, c, d, x[0], 7, -680876936); d = ff(d, a, b, c, x[1], 12, -389564586); c = ff(c, d, a, b, x[2], 17, 606105819); b = ff(b, c, d, a, x[3], 22, -1044525330);
+      a = ff(a, b, c, d, x[4], 7, -176418897); d = ff(d, a, b, c, x[5], 12, 1200080426); c = ff(c, d, a, b, x[6], 17, -1473231341); b = ff(b, c, d, a, x[7], 22, -45705983);
+      a = ff(a, b, c, d, x[8], 7, 1770035416); d = ff(d, a, b, c, x[9], 12, -1958414417); c = ff(c, d, a, b, x[10], 17, -42063); b = ff(b, c, d, a, x[11], 22, -1990404162);
+      a = ff(a, b, c, d, x[12], 7, 1804603682); d = ff(d, a, b, c, x[13], 12, -40341101); c = ff(c, d, a, b, x[14], 17, -1502002290); b = ff(b, c, d, a, x[15], 22, 1236535329);
+      a = gg(a, b, c, d, x[1], 5, -165796510); d = gg(d, a, b, c, x[6], 9, -1069501632); c = gg(c, d, a, b, x[11], 14, 643717713); b = gg(b, c, d, a, x[0], 20, -373897302);
+      a = gg(a, b, c, d, x[5], 5, -701558691); d = gg(d, a, b, c, x[10], 9, 38016083); c = gg(c, d, a, b, x[15], 14, -660478335); b = gg(b, c, d, a, x[4], 20, -405537848);
+      a = gg(a, b, c, d, x[9], 5, 568446438); d = gg(d, a, b, c, x[14], 9, -1019803690); c = gg(c, d, a, b, x[3], 14, -187363961); b = gg(b, c, d, a, x[8], 20, 1163531501);
+      a = gg(a, b, c, d, x[13], 5, -1444681467); d = gg(d, a, b, c, x[2], 9, -51403784); c = gg(c, d, a, b, x[7], 14, 1735328473); b = gg(b, c, d, a, x[12], 20, -1926607734);
+      a = hh(a, b, c, d, x[5], 4, -378558); d = hh(d, a, b, c, x[8], 11, -2022574463); c = hh(c, d, a, b, x[11], 16, 1839030562); b = hh(b, c, d, a, x[14], 23, -35309556);
+      a = hh(a, b, c, d, x[1], 4, -1530992060); d = hh(d, a, b, c, x[4], 11, 1272893353); c = hh(c, d, a, b, x[7], 16, -155497632); b = hh(b, c, d, a, x[10], 23, -1094730640);
+      a = hh(a, b, c, d, x[13], 4, 681279174); d = hh(d, a, b, c, x[0], 11, -358537222); c = hh(c, d, a, b, x[3], 16, -722521979); b = hh(b, c, d, a, x[6], 23, 76029189);
+      a = hh(a, b, c, d, x[9], 4, -640364487); d = hh(d, a, b, c, x[12], 11, -421815835); c = hh(c, d, a, b, x[15], 16, 530742520); b = hh(b, c, d, a, x[2], 23, -995338651);
+      a = ii(a, b, c, d, x[0], 6, -198630844); d = ii(d, a, b, c, x[7], 10, 1126891415); c = ii(c, d, a, b, x[14], 15, -1416354905); b = ii(b, c, d, a, x[5], 21, -57434055);
+      a = ii(a, b, c, d, x[12], 6, 1700485571); d = ii(d, a, b, c, x[3], 10, -1894986606); c = ii(c, d, a, b, x[10], 15, -1051523); b = ii(b, c, d, a, x[1], 21, -2054922799);
+      a = ii(a, b, c, d, x[8], 6, 1873313359); d = ii(d, a, b, c, x[15], 10, -30611744); c = ii(c, d, a, b, x[6], 15, -1560198380); b = ii(b, c, d, a, x[13], 21, 1309151649);
+      a = ii(a, b, c, d, x[4], 6, -145523070); d = ii(d, a, b, c, x[11], 10, -1120210379); c = ii(c, d, a, b, x[2], 15, 718787259); b = ii(b, c, d, a, x[9], 21, -343485551);
+      a = ad(a, AA); b = ad(b, BB); c = ad(c, CC); d = ad(d, DD);
+    }
+    return [a, b, c, d].map(function (v) { var r = ''; for (var i = 0; i < 4; i++) r += ('0' + ((v >>> (i * 8)) & 255).toString(16)).slice(-2); return r; }).join('');
+  }
+  function crc32(str) { var s = utf8(str), c, crc = -1; for (var i = 0; i < s.length; i++) { c = (crc ^ s.charCodeAt(i)) & 255; for (var k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; crc = (crc >>> 8) ^ c; } return hex32(~crc); }
+  var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  function b32enc(str) { var s = utf8(str), bits = '', out = ''; for (var i = 0; i < s.length; i++) bits += ('00000000' + s.charCodeAt(i).toString(2)).slice(-8); for (i = 0; i < bits.length; i += 5) out += B32[parseInt((bits.substr(i, 5) + '0000').slice(0, 5), 2)]; while (out.length % 8) out += '='; return out; }
+  function b32dec(str) { var bits = '', s = str.replace(/=+$/, '').toUpperCase().replace(/\s/g, ''), out = ''; for (var i = 0; i < s.length; i++) { var v = B32.indexOf(s[i]); if (v < 0) throw 0; bits += ('00000' + v.toString(2)).slice(-5); } for (i = 0; i + 8 <= bits.length; i += 8) out += String.fromCharCode(parseInt(bits.substr(i, 8), 2)); return decodeURIComponent(escape(out)); }
+  function rot(str, n) { return str.replace(/[a-z]/gi, function (c) { var b = c <= 'Z' ? 65 : 97; return String.fromCharCode((c.charCodeAt(0) - b + ((n % 26) + 26)) % 26 + b); }); }
+  function bytesOf(str) { var s = utf8(str), a = []; for (var i = 0; i < s.length; i++) a.push(s.charCodeAt(i)); return a; }
+  function strOf(bytes) { return decodeURIComponent(escape(String.fromCharCode.apply(null, bytes))); }
+  function b64uDecode(t) { t = t.replace(/-/g, '+').replace(/_/g, '/'); while (t.length % 4) t += '='; return decodeURIComponent(escape(atob(t))); }
+  var ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  var CODECS = [
+    { id: 'b64', name: 'Base64', enc: function (t) { return btoa(utf8(t)); }, dec: function (t) { return decodeURIComponent(escape(atob(t.trim().replace(/-/g, '+').replace(/_/g, '/')))); } },
+    { id: 'b64u', name: 'Base64 URL-safe', enc: function (t) { return btoa(utf8(t)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }, dec: function (t) { return b64uDecode(t.trim()); } },
+    { id: 'b32', name: 'Base32', enc: b32enc, dec: b32dec },
+    { id: 'hex', name: 'Hex', enc: function (t) { return bytesOf(t).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join(' '); }, dec: function (t) { var m = t.replace(/0x/gi, '').match(/[0-9a-f]{2}/gi); if (!m) throw 0; return strOf(m.map(function (x) { return parseInt(x, 16); })); } },
+    { id: 'bin', name: 'Binary', enc: function (t) { return bytesOf(t).map(function (b) { return ('00000000' + b.toString(2)).slice(-8); }).join(' '); }, dec: function (t) { var m = t.match(/[01]{8}/g); if (!m) throw 0; return strOf(m.map(function (x) { return parseInt(x, 2); })); } },
+    { id: 'oct', name: 'Octal', enc: function (t) { return bytesOf(t).map(function (b) { return b.toString(8); }).join(' '); }, dec: function (t) { var m = t.trim().split(/\s+/); return strOf(m.map(function (x) { var v = parseInt(x, 8); if (isNaN(v)) throw 0; return v; })); } },
+    { id: 'dec', name: 'ASCII codes (decimal)', enc: function (t) { return bytesOf(t).join(' '); }, dec: function (t) { return strOf(t.trim().split(/[\s,]+/).map(function (x) { var v = parseInt(x, 10); if (isNaN(v) || v > 255) throw 0; return v; })); } },
+    { id: 'url', name: 'URL (percent)', enc: function (t) { return encodeURIComponent(t); }, dec: function (t) { return decodeURIComponent(t.replace(/\+/g, ' ')); } },
+    { id: 'html', name: 'HTML entities', enc: function (t) { return t.replace(/[&<>"']/g, function (c) { return ENT[c]; }); }, dec: function (t) { var d = document.createElement('textarea'); d.innerHTML = t; return d.value; } },
+    { id: 'uni', name: 'Unicode escapes', enc: function (t) { return Array.from(t).map(function (c) { var n = c.codePointAt(0); return n < 128 && n > 31 ? c : n > 0xFFFF ? '\\u{' + n.toString(16) + '}' : '\\u' + ('0000' + n.toString(16)).slice(-4); }).join(''); }, dec: function (t) { return t.replace(/\\u\{([0-9a-f]+)\}|\\u([0-9a-f]{4})/gi, function (m, a, b2) { return String.fromCodePoint(parseInt(a || b2, 16)); }); } },
+    { id: 'rot13', name: 'ROT13', enc: function (t) { return rot(t, 13); }, dec: function (t) { return rot(t, 13); } },
+    { id: 'caesar', name: 'Caesar cipher', param: 'Shift (1 to 25)', enc: function (t, p) { return rot(t, parseInt(p, 10) || 3); }, dec: function (t, p) { return rot(t, -(parseInt(p, 10) || 3)); } },
+    { id: 'atbash', name: 'Atbash', enc: function (t) { return t.replace(/[a-z]/gi, function (c) { var b = c <= 'Z' ? 65 : 97; return String.fromCharCode(b + 25 - (c.charCodeAt(0) - b)); }); }, dec: null },
+    { id: 'morse', name: 'Morse code', enc: function (t) { return toMorse(t); }, dec: function (t) { return fromMorse(t); } },
+    { id: 'base', name: 'Number base', param: 'From base (2 to 36)', enc: function (t, p) { var v = parseInt(t.trim(), parseInt(p, 10) || 10); if (isNaN(v)) throw 0; return 'Binary: ' + v.toString(2) + '\nOctal: ' + v.toString(8) + '\nDecimal: ' + v.toString(10) + '\nHex: ' + v.toString(16).toUpperCase(); }, dec: null },
+    { id: 'jwt', name: 'JWT token (read only)', enc: null, dec: function (t) { var p = t.trim().split('.'); if (p.length < 2) throw 0; return 'Header:\n' + JSON.stringify(JSON.parse(b64uDecode(p[0])), null, 2) + '\n\nPayload:\n' + JSON.stringify(JSON.parse(b64uDecode(p[1])), null, 2) + '\n\nThe signature is not checked here.'; } },
+    { id: 'hash', name: 'Hashes (one way)', enc: function (t) { return 'MD5      ' + md5(t) + '\nSHA-1    ' + sha1(t) + '\nSHA-256  ' + sha256(t) + '\nCRC32    ' + crc32(t); }, dec: null }
+  ];
+  reg('code', 'code', 'Encoders and decoders', 'Base64, hex, binary, URL, hashes, JWT, ciphers', false, function (b) {
+    var sc = sel(CODECS.map(function (c) { return [c.id, c.name]; })), ta = h('textarea'), pr = inp('text', ''), o = h('textarea'), st = h('small', '');
+    ta.style.minHeight = '90px'; o.style.minHeight = '110px'; o.readOnly = true; ta.placeholder = 'Type or paste text here'; o.style.fontFamily = 'monospace';
+    var pf = fld('', pr); pf.style.display = 'none';
+    b.appendChild(fld('METHOD', sc)); b.appendChild(fld('INPUT', ta)); b.appendChild(pf);
+    var r = row(), be = btn('ENCODE', function () { run(true); }, 'pri'), bd = btn('DECODE', function () { run(false); }, 'pri');
+    r.appendChild(be); r.appendChild(bd); r.appendChild(btn('SWAP', function () { if (o.value) { ta.value = o.value; o.value = ''; } })); r.appendChild(btn('CLEAR', function () { ta.value = ''; o.value = ''; st.textContent = ''; }));
+    b.appendChild(r); b.appendChild(fld('RESULT', o)); var r2 = row(); r2.appendChild(copyBtn(function () { return o.value; })); b.appendChild(r2); b.appendChild(st);
+    function cur() { return CODECS.filter(function (c) { return c.id === sc.value; })[0]; }
+    function sync() { var c = cur(); be.disabled = !c.enc; bd.disabled = !c.dec; pf.style.display = c.param ? '' : 'none'; if (c.param) { pf.firstChild.textContent = c.param.toUpperCase(); pr.value = c.id === 'base' ? '10' : '3'; } }
+    function run(enc) {
+      var c = cur(), f = enc ? c.enc : c.dec; if (!f) return; st.textContent = '';
+      try { o.value = f(ta.value, pr.value); if (!o.value && ta.value) st.textContent = 'The result is empty.'; } catch (e) { o.value = ''; st.textContent = 'That input cannot be ' + (enc ? 'encoded' : 'decoded') + ' with ' + c.name + '. Check the method and the text.'; }
+    }
+    sc.addEventListener('change', sync); sync();
+  });
+
   /* life calculators */
-  reg('life', '🧾', 'Daily calculators', 'Tip split, BMI, age, loan, discount', false, function (b) {
+  reg('life', 'life', 'Daily calculators', 'Tip split, BMI, age, loan, discount', false, function (b) {
     var kinds = [['tip', 'Tip and split'], ['bmi', 'BMI'], ['age', 'Age and dates'], ['loan', 'Loan (EMI)'], ['disc', 'Discount'], ['fuel', 'Fuel cost']], k = sel(kinds), box = h('div'); b.appendChild(fld('CALCULATOR', k)); b.appendChild(box);
     function form(fields, go) {
       box.innerHTML = ''; var ins = fields.map(function (f) { var i = f[2] === 'date' ? inp('date') : inp('number', f[1], f[2] || ''); if (f[2] === 'date') i.value = ''; i.setAttribute('inputmode', 'decimal'); box.appendChild(fld(f[0], i)); return i; }), o = out(); box.appendChild(btn('CALCULATE', function () { var x = go(ins.map(function (i) { return i.type === 'date' ? i.value : parseFloat(i.value); })); o.innerHTML = x; }, 'pri')); box.appendChild(o);
@@ -350,46 +437,10 @@
   var ZONES = [['Dhaka', 'Asia/Dhaka'], ['Delhi', 'Asia/Kolkata'], ['Karachi', 'Asia/Karachi'], ['Dubai', 'Asia/Dubai'], ['Riyadh', 'Asia/Riyadh'], ['Istanbul', 'Europe/Istanbul'], ['London', 'Europe/London'], ['Paris', 'Europe/Paris'], ['Moscow', 'Europe/Moscow'], ['New York', 'America/New_York'], ['Chicago', 'America/Chicago'], ['Los Angeles', 'America/Los_Angeles'], ['Toronto', 'America/Toronto'], ['Singapore', 'Asia/Singapore'], ['Kuala Lumpur', 'Asia/Kuala_Lumpur'], ['Tokyo', 'Asia/Tokyo'], ['Sydney', 'Australia/Sydney']];
   function zoneTime(z, d) { try { return new Intl.DateTimeFormat([], { timeZone: z, hour: '2-digit', minute: '2-digit', hour12: false }).format(d); } catch (e) { return '—'; } }
   function zoneOffsetMin(z, d) { try { var p = new Intl.DateTimeFormat('en-US', { timeZone: z, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(d), o = {}; p.forEach(function (x) { o[x.type] = +x.value; }); return (Date.UTC(o.year, o.month - 1, o.day, o.hour, o.minute, o.second) - d.getTime()) / 60000; } catch (e) { return 0; } }
-  reg('clocks', '🕒', 'World clock', 'Time in other cities', false, function (b) {
+  reg('clocks', 'clocks', 'World clock', 'Time in other cities', false, function (b) {
     var list = h('div'); b.appendChild(list);
     function draw() { var now = new Date(), me = -now.getTimezoneOffset(); list.innerHTML = ''; ZONES.forEach(function (z) { var df = Math.round((zoneOffsetMin(z[1], now) - me) / 60 * 10) / 10, c = h('div', 'card'); c.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 14px'; c.innerHTML = '<div><b>' + esc(z[0]) + '</b><br><small style="color:var(--mute)">' + (df === 0 ? 'Same as you' : (df > 0 ? '+' : '') + df + ' h from you') + '</small></div><div style="font-family:Orbitron,sans-serif;font-size:22px;color:var(--cy2)">' + zoneTime(z[1], now) + '</div>'; list.appendChild(c); }); }
     draw(); tick = setInterval(draw, 20000);
-  });
-
-  /* timer + stopwatch */
-  reg('timer', '⏱', 'Stopwatch and timer', 'Laps and countdown', false, function (b) {
-    var disp = h('div'); disp.style.cssText = 'text-align:center;font-family:Orbitron,sans-serif;font-size:42px;color:var(--cy2);margin:14px 0'; disp.textContent = '00:00.0'; b.appendChild(disp);
-    var mode = 'sw', t0 = 0, acc = 0, run = false, laps = [], total = 0, lapsEl = h('div'); lapsEl.style.cssText = 'color:var(--mute);font-size:15px;margin-top:8px';
-    function ms(x) { var m = Math.floor(x / 60000), s = Math.floor(x / 1000) % 60, t = Math.floor(x / 100) % 10; return ('0' + m).slice(-2) + ':' + ('0' + s).slice(-2) + '.' + t; }
-    var minIn = inp('number', 'Minutes', '5'); minIn.setAttribute('inputmode', 'decimal');
-    var rows = row(), go = btn('START', toggle, 'pri'), lap = btn('LAP', function () { if (mode === 'sw' && run) { laps.unshift(ms(acc + Date.now() - t0)); lapsEl.innerHTML = laps.slice(0, 10).map(function (x, i) { return '<div>Lap ' + (laps.length - i) + ': ' + x + '</div>'; }).join(''); } }), rst = btn('RESET', reset), md = btn('SWITCH TO COUNTDOWN', function () { mode = mode === 'sw' ? 'cd' : 'sw'; md.textContent = mode === 'sw' ? 'SWITCH TO COUNTDOWN' : 'SWITCH TO STOPWATCH'; minIn.parentNode.style.display = mode === 'cd' ? '' : 'none'; lap.style.display = mode === 'sw' ? '' : 'none'; reset(); });
-    var minF = fld('COUNTDOWN MINUTES', minIn); minF.style.display = 'none'; b.appendChild(minF); [go, lap, rst, md].forEach(function (x) { rows.appendChild(x); }); b.appendChild(rows); b.appendChild(lapsEl);
-    function show() { var e = acc + (run ? Date.now() - t0 : 0); if (mode === 'cd') { var left = Math.max(0, total - e); disp.textContent = ms(left); if (left <= 0 && run) { fin(); } } else disp.textContent = ms(e); }
-    function fin() { run = false; go.textContent = 'START'; clearInterval(tick); tick = null; host.toast('Time is up!', 4000); try { var m = beepMorse('... ...', 20, function () { }, function () { }); } catch (e) { /* */ } if (navigator.vibrate) navigator.vibrate([300, 150, 300]); }
-    function toggle() { if (!run) { if (mode === 'cd' && !acc) { total = Math.max(1, parseFloat(minIn.value) || 1) * 60000; } t0 = Date.now(); run = true; go.textContent = 'PAUSE'; tick = setInterval(show, 100); } else { acc += Date.now() - t0; run = false; go.textContent = 'RESUME'; clearInterval(tick); tick = null; show(); } }
-    function reset() { run = false; acc = 0; laps = []; lapsEl.innerHTML = ''; go.textContent = 'START'; clearInterval(tick); tick = null; disp.textContent = mode === 'cd' ? ms((parseFloat(minIn.value) || 5) * 60000) : '00:00.0'; }
-  });
-
-  /* random */
-  reg('random', '🎲', 'Coin, dice, picker', 'Flip, roll or choose', false, function (b) {
-    var o = out(); o.style.cssText += ';font-size:30px;text-align:center;font-family:Orbitron,sans-serif;color:var(--cy2)'; o.textContent = '?'; b.appendChild(o);
-    var r = row(); r.appendChild(btn('FLIP A COIN', function () { o.textContent = rnd(2) ? 'HEADS' : 'TAILS'; }, 'pri')); [6, 20].forEach(function (n) { r.appendChild(btn('ROLL D' + n, function () { o.textContent = String(1 + rnd(n)); })); }); b.appendChild(r);
-    var lo = inp('number', 'From', '1'), hi = inp('number', 'To', '100'); var rr = row(); lo.style.width = hi.style.width = '100px'; rr.appendChild(lo); rr.appendChild(hi); rr.appendChild(btn('RANDOM NUMBER', function () { var a = parseInt(lo.value, 10), z = parseInt(hi.value, 10); if (isNaN(a) || isNaN(z)) return; if (a > z) { var t = a; a = z; z = t; } o.textContent = String(a + rnd(z - a + 1)); })); b.appendChild(rr);
-    var ta = h('textarea'); ta.placeholder = 'One option per line'; ta.style.minHeight = '90px'; b.appendChild(fld('PICK ONE FROM A LIST', ta)); var r3 = row(); r3.appendChild(btn('PICK ONE', function () { var l = ta.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); if (l.length) o.textContent = l[rnd(l.length)]; })); r3.appendChild(btn('SHUFFLE', function () { var l = ta.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); for (var i = l.length - 1; i > 0; i--) { var j = rnd(i + 1), t = l[i]; l[i] = l[j]; l[j] = t; } o.style.fontSize = '18px'; o.textContent = l.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n'); })); b.appendChild(r3);
-  });
-
-  /* text tools */
-  reg('text', 'Aa', 'Text tools', 'Count, convert, hash', false, function (b) {
-    var ta = h('textarea'); ta.style.minHeight = '120px'; ta.placeholder = 'Paste or type text'; var o = out(); o.textContent = '—'; b.appendChild(fld('TEXT', ta));
-    var r = row();
-    function put(s) { o.textContent = s; }
-    [['COUNT', function () { var t = ta.value, w = t.trim() ? t.trim().split(/\s+/).length : 0; put(w + ' words · ' + t.length + ' characters · ' + (t.trim() ? t.split(/[.!?]+\s/).filter(Boolean).length : 0) + ' sentences · about ' + Math.max(1, Math.round(w / 200)) + ' min to read'); }],
-      ['UPPER', function () { put(ta.value.toUpperCase()); }], ['lower', function () { put(ta.value.toLowerCase()); }], ['Title', function () { put(ta.value.toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); })); }],
-      ['REVERSE', function () { put(Array.from(ta.value).reverse().join('')); }], ['SORT LINES', function () { put(ta.value.split('\n').sort(function (a, c) { return a.localeCompare(c); }).join('\n')); }],
-      ['UNIQUE LINES', function () { var s = {}; put(ta.value.split('\n').filter(function (x) { if (s[x]) return false; s[x] = 1; return true; }).join('\n')); }], ['CLEAN SPACES', function () { put(ta.value.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()); }],
-      ['BASE64 ENCODE', function () { try { put(btoa(utf8(ta.value))); } catch (e) { put('Could not encode.'); } }], ['BASE64 DECODE', function () { try { put(decodeURIComponent(escape(atob(ta.value.trim())))); } catch (e) { put('That is not valid Base64.'); } }],
-      ['SHA-256', function () { put(sha256(ta.value)); }]].forEach(function (x) { r.appendChild(btn(x[0], x[1])); });
-    b.appendChild(r); b.appendChild(o); var r2 = row(); r2.appendChild(copyBtn(function () { return o.textContent; })); r2.appendChild(btn('USE RESULT AS TEXT', function () { ta.value = o.textContent; })); b.appendChild(r2);
   });
 
   /* PC only */
@@ -399,7 +450,7 @@
       try { var r = await host.act(type, arg || '', ''); o.textContent = (r && r.msg) || (r && r.ok ? 'Done.' : 'That did not work.'); } catch (e) { o.textContent = 'That did not work.'; }
     });
   }
-  reg('pc', '🖥', 'PC tools', 'Health, clean-up, power', true, function (b) {
+  reg('pc', 'pc', 'PC tools', 'Health, clean-up, power', true, function (b) {
     var o = out(); o.textContent = 'Pick a tool.'; var g = h('div'); g.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px';
     [['SYSTEM HEALTH', 'pcinfo', 'status'], ['BIGGEST PROGRAMS', 'procs'], ['NETWORK INFO', 'netinfo'], ['STARTUP APPS', 'startups'], ['TASK MANAGER', 'taskmgr'], ['LOCK PC', 'lock'],
       ['TIDY DOWNLOADS (PREVIEW)', 'tidydl', 'preview'], ['TIDY DOWNLOADS NOW', 'tidydl', 'run', 'Move loose files from your Downloads folder into tidy sub-folders (Images, Documents, Videos…)? Nothing is deleted.'],
@@ -414,7 +465,7 @@
     b.appendChild(h('div', '', '<small style="color:var(--mute)">Small helpers that run on this ' + (host.PC ? 'PC' : 'phone') + '. None of them use your AI keys or tokens.</small>'));
     var g = h('div'); g.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px';
     TOOLS.forEach(function (t) {
-      if (t.pcOnly && !host.PC) return; var c = h('button', 'card'); c.style.cssText = 'text-align:left;padding:14px;min-height:92px;display:flex;flex-direction:column;gap:4px;margin:0'; c.innerHTML = '<span style="font-size:24px;color:var(--cy2)">' + t.icon + '</span><b>' + esc(t.name) + '</b><small style="color:var(--mute)">' + esc(t.desc) + '</small>';
+      if ((t.pcOnly && !host.PC) || (host.hidden && host.hidden(t.id))) return; var c = h('button', 'card'); c.style.cssText = 'text-align:left;padding:14px;min-height:92px;display:flex;flex-direction:column;gap:4px;margin:0'; c.innerHTML = '<span style="font-size:26px;color:var(--cy2)">' + ic(t.icon) + '</span><b>' + esc(t.name) + '</b><small style="color:var(--mute)">' + esc(t.desc) + '</small>';
       c.addEventListener('click', function () { view(t.name, t.build); }); g.appendChild(c);
     });
     b.appendChild(g);
@@ -425,16 +476,12 @@
     var t = String(text || '').toLowerCase().trim().replace(/[?!.]+$/, ''), m;
     if (/^(?:open |show |what are )?(?:the |my )?(?:tools|toolbox|utilities)$/.test(t)) return { text: 'Opening your tools.', run: function () { api.open(); } };
     if (/^(?:run |do |start |check )?(?:a |an |my |the )?(?:internet |network |wi-?fi |connection )?speed(?: ?test| check)?$|^(?:how fast is|test) (?:my )?(?:internet|network|wi-?fi|connection)(?: speed)?$/.test(t)) return { text: 'Starting the speed test.', run: function () { api.open('speed', true); } };
-    if (/^(?:flip|toss)(?: a)? coin$/.test(t)) return { text: rnd(2) ? 'Heads.' : 'Tails.' };
-    if ((m = /^(?:roll|throw)(?: a| an)?(?: d| dice ?d?)?\s*(\d+)?(?: sided)? ?(?:dice|die)?$/.exec(t)) && /(roll|throw)/.test(t) && /(dice|die|d\d)/.test(t)) { var n = Math.max(2, Math.min(1000, +m[1] || 6)); return { text: 'You rolled a ' + (1 + rnd(n)) + '.' }; }
     if ((m = /^(?:random number|pick a number|give me a number) (?:between|from) (-?\d+) (?:and|to) (-?\d+)$/.exec(t))) { var a = +m[1], z = +m[2]; if (a > z) { var tt = a; a = z; z = tt; } return { text: 'Your number is ' + (a + rnd(z - a + 1)) + '.' }; }
     if ((m = /^(?:convert|how many|what is|what's)\s+(-?[\d.]+)\s*([a-z°²/ ]+?)\s+(?:to|in|into|is how many)\s+([a-z°²/ ]+)$/.exec(t))) { var fu = normUnit(m[2].trim()), tu = normUnit(m[3].trim()); if (fu && tu && unitCat(fu) === unitCat(tu)) return { text: fmt(+m[1]) + ' ' + fu + ' is ' + fmt(convertUnit(+m[1], fu, tu)) + ' ' + tu + '.' }; }
     if ((m = /^(?:calculate|calc|compute|what is|what's|how much is)\s+(.+)$/.exec(t)) && /[\d]/.test(m[1]) && /[-+*/^x%×÷]|times|plus|minus|divided|percent|sqrt|squared|cubed|over/.test(m[1])) { var v = calcLine(m[1]); if (v != null) return { text: m[1].replace(/\s+/g, ' ') + ' = ' + v + '.' }; }
     if ((m = /^(?:is |check |scan )(?:this |the )?(?:link |url |website )?(\S+\.\S+)(?: (?:safe|a scam|legit|ok))?$/.exec(t)) && /(safe|scam|legit|check|scan|ok)/.test(t)) { var x = urlCheck(m[1]); return { text: urlSummary(x) }; }
     if ((m = /^(?:morse(?: code)?(?: for| of)?|translate (.+) to morse)\s*(.*)$/.exec(t)) && (m[1] || m[2])) { var s = m[1] || m[2]; return { text: toMorse(s) ? 'In Morse, ' + s + ' is: ' + toMorse(s).replace(/\./g, 'dot ').replace(/-/g, 'dash ').replace(/\s+/g, ' ').trim() + '.' : 'I could not turn that into Morse.', show: toMorse(s) }; }
     if (/^(?:qr code|make a qr|scan (?:a |the )?qr(?: code)?)$/.test(t)) return { text: 'Opening the QR tool.', run: function () { api.open('qr'); } };
-    if (/^(?:password (?:strength|check)|(?:is )?my password (?:safe|leaked)|has my password leaked)$/.test(t)) return { text: 'Opening the password tool. Type it there, not here, so it stays out of the chat.', run: function () { api.open('pass'); } };
-    if (/^(?:stopwatch|start (?:a )?stopwatch)$/.test(t)) return { text: 'Opening the stopwatch.', run: function () { api.open('timer'); } };
     if (/^(?:world clock|time zones?|what time is it (?:around|across) the world)$/.test(t)) return { text: 'Opening the world clock.', run: function () { api.open('clocks'); } };
     if ((m = /^(?:what(?:'s| is)(?: the)? time in|time in) ([a-z ]+)$/.exec(t))) { var city = m[1].trim(), z2 = ZONES.filter(function (q) { return q[0].toLowerCase() === city; })[0]; if (z2) return { text: 'It is ' + zoneTime(z2[1], new Date()) + ' in ' + z2[0] + '.' }; }
     if ((m = /^(?:currency|convert) ?(?:rates?)?$/.exec(t))) return { text: 'Opening the converter.', run: function () { api.open('convert'); } };
@@ -451,8 +498,9 @@
       if (!panel) return; panel.open(); var t = TOOLS.filter(function (x) { return x.id === id && (!x.pcOnly || host.PC); })[0];
       if (t) { view(t.name, t.build); if (autostart) { var go = panel.body.querySelector('.btn.pri'); if (go) setTimeout(function () { go.click(); }, 350); } } else home();
     },
-    intent: intent,
+    intent: intent, icon: ic, list: function () { return TOOLS.filter(function (t) { return !t.pcOnly || (host && host.PC); }).map(function (t) { return { id: t.id, name: t.name, desc: t.desc, icon: t.icon }; }); },
     calc: calcLine, urlCheck: urlCheck, urlSummary: urlSummary, toMorse: toMorse, fromMorse: fromMorse, strength: strength, sha1: sha1, sha256: sha256, convertUnit: convertUnit, normUnit: normUnit, genPass: genPass, beepMorse: beepMorse
   };
   window.JarvisTools = api;
 })();
+// CRB-MARK 4358138ef78b

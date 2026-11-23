@@ -15,7 +15,9 @@ const { Relay } = require('./relay');
 const proto = require('./link-protocol');
 const { createBall } = require('./ball');
 // a file from the phone: pictures go to Pictures\Jarvis, everything else to Downloads\Jarvis (never overwrites; never opened automatically)
+const AUTORUN = /\.(bat|cmd|vbs|vbe|js|jse|wsf|wsh|ps1|psm1|scr|pif|lnk|hta|reg|cpl|inf|url|application|msc|gadget)$/i;
 function saveFromPhone(name, mime, data) {         // data: a Buffer, or the path of a finished temporary file (big Wi-Fi transfers)
+  if (AUTORUN.test(String(name || ''))) return { ok: false, msg: 'That file type can start by itself on a PC, so I do not accept it. Zip it first.' };
   try {
     const img = /^image\//i.test(mime);
     const base = app.getPath(img ? 'pictures' : 'downloads');

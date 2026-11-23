@@ -126,7 +126,8 @@ function make(deps) {
   }
 
   const inbound = new Map();
-  const BLOCKED_EXT = /\.(exe|bat|cmd|msi|vbs|vbe|ps1|psm1|scr|com|js|jse|wsf|lnk|jar|dll|reg|hta|cpl|msc|apk|sh)$/i;
+  // only types that start by themselves on Windows are refused; everything else (apk, zip, exe, ...) is saved to disk and never run
+  const BLOCKED_EXT = /\.(bat|cmd|vbs|vbe|js|jse|wsf|wsh|ps1|psm1|scr|pif|lnk|hta|reg|cpl|inf|url|application|msc|gadget)$/i;
   function cleanName(n) {
     n = String(n == null ? '' : n).replace(/\\/g, '/'); n = n.slice(n.lastIndexOf('/') + 1).replace(/[\x00-\x1f<>:"|?*]/g, '_').trim();
     while (n.startsWith('.')) n = n.slice(1);
@@ -635,7 +636,7 @@ function make(deps) {
         const id = String(m.id || '').replace(/[^A-Za-z0-9_-]/g, ''); const i = m.i | 0, n = m.n | 0, size = +m.size || 0;
         if (id.length < 4 || id.length > 40 || n < 1 || n > 160 || i < 0 || i >= n || size < 1 || size > 5000000) return R(false, 'That file transfer was not valid.');
         const name = cleanName(m.name), mime = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(String(m.mime || '')) ? String(m.mime).toLowerCase() : 'application/octet-stream';
-        if (BLOCKED_EXT.test(name)) return R(false, 'I do not accept that type of file (programs and scripts are refused).');
+        if (BLOCKED_EXT.test(name)) return R(false, 'I do not accept that type of file: it can start by itself on a PC. Zip it first and I will take it.');
         const part = Buffer.from(String(b64 || ''), 'base64');
         if (!part.length || part.length > 300000) return R(false, 'That piece of the file was not valid.');
         const now = Date.now();
