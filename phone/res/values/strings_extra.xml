@@ -6,5 +6,6 @@
     <string name="widget_label">Open Jarvis</string>
     <string name="widget_notes_desc">Your newest Jarvis notes on the home screen. Tap to open, + ADD to write one</string>
     <string name="widget_small_desc">Small Jarvis clock and battery</string>
+    <string name="widget_em_desc">Emergency: siren, SOS light and the emergency screen</string>
     <string name="tile_label">Jarvis</string>
 </resources>

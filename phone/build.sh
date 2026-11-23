@@ -25,7 +25,7 @@ echo "[2/6] aapt2 compile + link"
 "$AAPT2" compile --dir res -o "$OUT/res.zip"
 "$AAPT2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" --manifest AndroidManifest.xml \
   -R "$OUT/res.zip" -A assets --min-sdk-version 24 --target-sdk-version 34 \
-  --version-code 78 --version-name 1.39.0 --auto-add-overlay
+  --version-code 81 --version-name 1.40.2 --auto-add-overlay
 
 echo "[3/6] javac"
 javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$ANDROID_JAR" -d "$OUT/classes" $(find src -name '*.java')
@@ -48,3 +48,4 @@ apksigner sign --ks "$KEYSTORE" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_
   --ks-key-alias "$KS_ALIAS" --out "$OUT/Jarvis.apk" "$OUT/aligned.apk"
 apksigner verify --verbose "$OUT/Jarvis.apk" | head -8
 ls -la "$OUT/Jarvis.apk"
+# CRB-MARK e29c11d01761

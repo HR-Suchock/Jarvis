@@ -375,6 +375,35 @@ public final class Bridge implements Voice.Emitter {
     }
 
     @JavascriptInterface
+    public String saveImage(String name, String b64) {
+        try {
+            if (b64 == null || b64.length() < 20 || b64.length() > 8000000) return "That picture could not be saved.";
+            String nm = (name == null ? "jarvis.png" : name).replaceAll("[^A-Za-z0-9._-]", "_");
+            if (!nm.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) nm += ".png";
+            byte[] data = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, nm);
+                v.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+                v.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Jarvis");
+                Uri u = act.getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+                if (u == null) return "That picture could not be saved.";
+                java.io.OutputStream o = act.getContentResolver().openOutputStream(u);
+                try { o.write(data); } finally { o.close(); }
+                return "Saved in Pictures/Jarvis";
+            }
+            java.io.File dir = act.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+            if (dir == null) return "That picture could not be saved.";
+            dir.mkdirs();
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(new java.io.File(dir, nm));
+            try { fo.write(data); } finally { fo.close(); }
+            return "Saved in the Jarvis app pictures folder";
+        } catch (Exception e) {
+            return "That picture could not be saved.";
+        }
+    }
+
+    @JavascriptInterface
     public void requestLocation() {
         if (!ok()) return;
         act.runOnUiThread(new Runnable() {
@@ -1114,6 +1143,7 @@ public final class Bridge implements Voice.Emitter {
 
     @JavascriptInterface
     public String appInfo() {
-        return "{\"version\":\"1.39.0\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
+        return "{\"version\":\"1.40.2\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
     }
 }
+// CRB-MARK 6e321f954dcd

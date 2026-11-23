@@ -21,3 +21,4 @@ for fam, w, fn in faces:
 os.makedirs("assets/css", exist_ok=True)
 open("assets/css/fonts.css", "w").write("\n".join(css))
 print("fonts.css written", sum(len(c) for c in css) // 1024, "KB")
+# CRB-MARK e135b48c0ba7

@@ -110,7 +110,14 @@ final class Lan {
                 while (t < 64) { int k = in.read(tail, t, 64 - t); if (k < 0) break; t += k; }
                 byte[] tp = t == 64 ? dc.update(tail) : null;
                 if (got != size || tp == null || !new String(tp, UTF8).equals(hex(md.digest()))) { out.write("ERR the file was damaged on the way\n".getBytes(UTF8)); return; }
-                String msg = sink.done(part, name, mime);
+                String msg;
+                try {
+                    msg = sink.done(part, name, mime);
+                } catch (Exception e) {
+                    String em = e.getMessage() == null ? "the phone could not save it" : e.getMessage().replace('\n', ' ');
+                    out.write(("ERR " + em + "\n").getBytes(UTF8));
+                    return;
+                }
                 out.write(("OK " + msg + "\n").getBytes(UTF8));
                 out.flush();
             } finally {
@@ -178,3 +185,4 @@ final class Lan {
         return null;
     }
 }
+// CRB-MARK b18c915ce8b5

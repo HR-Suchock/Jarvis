@@ -31,6 +31,7 @@ final class Emergency {
     private static AudioTrack track;
     private static Thread soundThread;
     private static volatile boolean soundOn;
+    private static volatile String soundKind = "";
     private static int oldVol = -1;
     private static Context soundCtx;
     private static final Runnable SOUND_AUTO = new Runnable() {
@@ -42,6 +43,10 @@ final class Emergency {
 
     static boolean soundPlaying() {
         return soundOn;
+    }
+
+    static String soundKind() {
+        return soundOn ? soundKind : "";
     }
 
     /** kind: "whistle" (3 sharp blasts, the international distress signal) or "siren" (rising and falling wail). */
@@ -66,6 +71,7 @@ final class Emergency {
             t.play();
             track = t;
             soundOn = true;
+            soundKind = kind;
         } catch (Throwable e) {
             soundOn = false;
             releaseTrack();
@@ -328,3 +334,4 @@ final class Emergency {
                 Math.max(0, (System.currentTimeMillis() - l.getTime()) / 1000));
     }
 }
+// CRB-MARK 948bde4b8d68

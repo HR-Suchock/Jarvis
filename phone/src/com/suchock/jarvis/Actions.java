@@ -133,6 +133,13 @@ final class Actions {
                     return er == null ? res(true, "Signalling with the flashlight.") : res(false, er);
                 }
                 case "emstop": { Emergency.soundStop(); Emergency.morseStop(); Emergency.trackStop(); FindPhone.stop(ctx); return res(true, "All emergency signals are off."); }
+                case "emstate": return res(true, Emergency.soundKind() + "|" + (Emergency.morsePlaying() ? 1 : 0) + "|" + (Emergency.tracking() ? 1 : 0));
+                case "emtrack": {
+                    Emergency.remember(ctx);
+                    if ("off".equals(arg)) { Emergency.trackStop(); return res(true, "Location tracking is off."); }
+                    if (!Emergency.hasLocationPermission(ctx)) return res(false, "Location permission is off. Allow it in Android settings for Jarvis.");
+                    return Emergency.trackStart(ctx) ? res(true, "Tracking your location. It stops by itself after 30 minutes.") : res(false, "I could not start location tracking.");
+                }
                 case "where": return where();
                 case "notify": return notifyMsg(arg);
                 case "setclip": return setClip(arg);
@@ -236,7 +243,7 @@ final class Actions {
 
     private static boolean blockedName(String n) {
         String x = n.toLowerCase(Locale.ROOT);
-        String[] bad = {".apk", ".dex", ".jar", ".sh", ".bat", ".cmd", ".exe", ".msi", ".vbs", ".ps1", ".scr", ".com", ".js", ".lnk", ".so"};
+        String[] bad = {".bat", ".cmd", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".ps1", ".psm1", ".scr", ".pif", ".lnk", ".hta", ".reg", ".cpl", ".inf", ".url", ".application", ".msc", ".gadget"};
         for (String b : bad) if (x.endsWith(b)) return true;
         return false;
     }
@@ -315,7 +322,7 @@ final class Actions {
                     Lan.receiveOnce(ss, token, new java.io.File(ctx.getCacheDir(), "incoming"), new Lan.Sink() {
                         public String done(java.io.File f, String name, String mime) throws Exception {
                             String n = safeName(name);
-                            if (blockedName(n)) throw new java.io.IOException("not accepted");
+                            if (blockedName(n)) throw new java.io.IOException("that file type starts by itself on a PC, so it is not accepted");
                             return finishIncoming(f, n, guessMime(n, mime));
                         }
                     });
@@ -1165,3 +1172,4 @@ final class Actions {
         return res(false, "I can't see an align " + d + " button. Plain-text apps like Notepad have no alignment; in Docs or Word, open the formatting bar first.");
     }
 }
+// CRB-MARK ebb0a890025b

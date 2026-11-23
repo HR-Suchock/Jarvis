@@ -12,3 +12,4 @@ public final class LinkBootReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(a) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)) RelayService.sync(context);
     }
 }
+// CRB-MARK a5b543817a0b

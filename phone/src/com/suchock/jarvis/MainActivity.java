@@ -81,7 +81,7 @@ public class MainActivity extends Activity {
         StatusCard.cancel(this);
         bridge = new Bridge(this, web);
         bridge.pendingShare = shareText(getIntent());
-        bridge.launchFlag = isMonitor(getIntent()) ? "monitor" : isNotes(getIntent()) ? notesFlag(getIntent()) : (isAssist(getIntent()) ? "assist" : "");
+        bridge.launchFlag = isEmergency(getIntent()) ? "emergency" : isMonitor(getIntent()) ? "monitor" : isNotes(getIntent()) ? notesFlag(getIntent()) : (isAssist(getIntent()) ? "assist" : "");
         web.addJavascriptInterface(bridge, "AndroidBridge");
 
         web.setWebViewClient(new WebViewClient() {
@@ -213,6 +213,10 @@ public class MainActivity extends Activity {
         return "application/octet-stream";
     }
 
+    private static boolean isEmergency(Intent i) {
+        return i != null && "com.suchock.jarvis.EMERGENCY".equals(i.getAction());
+    }
+
     private static boolean isMonitor(Intent i) {
         return i != null && "com.suchock.jarvis.MONITOR".equals(i.getAction());
     }
@@ -253,6 +257,8 @@ public class MainActivity extends Activity {
                 bridge.emit("notes", new org.json.JSONObject().put("add", "notesadd".equals(notesFlag(intent))));
             } catch (Exception ignored) {
             }
+        } else if (isEmergency(intent)) {
+            bridge.emit("emergency", new org.json.JSONObject());
         } else if (isMonitor(intent)) {
             bridge.emit("monitor", new org.json.JSONObject());
         } else if (isAssist(intent)) {
@@ -309,3 +315,4 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
+// CRB-MARK 6029324a5813

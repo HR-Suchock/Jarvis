@@ -63,3 +63,4 @@ for name, px in sizes.items():
 fg = reactor(432, 0.62, with_bg=False)
 save("res/drawable-nodpi/ic_launcher_fg.png", fg)
 print("icons ok")
+# CRB-MARK af914d92a0ab
