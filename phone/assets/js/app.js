@@ -52,7 +52,7 @@
   function provById(id) { for (var i = 0; i < PROVIDERS.length; i++) if (PROVIDERS[i].id === id) return PROVIDERS[i]; return PROVIDERS[0]; }
 
   var LANGS = [
-    ['en-GB', 'English — classic Jarvis'],
+    ['en-GB', 'English (UK) — Jarvis'],
     ['bn-BD', 'বাংলা (Bangla)'],
     ['hi-IN', 'हिन्दी (Hindi)']
   ];
@@ -77,11 +77,12 @@
   var DEFAULTS = {
     v140: 0, toolsOff: [], name: '', active: 'gemini', providers: {}, fallback: true,
     speak: true, handsFree: false, wake: false, clap: false, pcHud: true, ballCall: false, theme: 'cyan', voiceMode: 'jarvis', autoLang: true, lang: 'en-GB', rate: 1.0, pitch: 1.0,
-    about: {}, aboutOn: true, systemPrompt: '', style: 'friend', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
+    about: {}, aboutOn: true, systemPrompt: '', style: 'jarvis', styleMig: '', emotions: true, askedPerms: false, confirmRisky: true, orbStyle: 'classic', briefNews: true, confirmCalls: false, lastBackup: 0, firstRun: 0, nudgedAt: 0,
     services: { tvKey: '', spKey: '', owKey: '', city: '', units: 'metric' },
     learned: [], aiOrder: [], searchOrder: ['tavily', 'serpapi', 'free'], sens: 4, learn: true
   };
   var S = loadSettings();
+  if (S.styleMig !== '1.41') { S.style = 'jarvis'; S.styleMig = '1.41'; try { save(); } catch (e) { /* ignore */ } }
   try { if (window.__JARVIS_TEST) window.__li = function (x) { return localIntent(x); }; window.__pad = function () { if (!padP) buildTouchpad(); padP.open(); return 1; }; } catch (e) { /* */ }
   function cleanOrder(a, all) {            // a saved ranking: only known ids, no repeats, anything new added at the end
     var out = [];
@@ -677,38 +678,15 @@
     return out;
   }
 
-  /* ------------------------------------------------------------------ About me: Jarvis quietly learns the few important things you tell him (stored on this device, editable in Personality) */
-  var LEARN_MAX = 60;
-  function learnedGet() { return Array.isArray(S.learned) ? S.learned.filter(function (x) { return x && typeof x.f === 'string' && x.f; }) : []; }
-  function learnedAdd(label, val) {
-    val = String(val || '').replace(/[\s.,!?;:]+$/g, '').replace(/\s+/g, ' ').trim();
-    if (val.length < 2 || val.length > 70 || /\d{6,}/.test(val) || /\b(?:password|passcode|pin|otp|cvv|card|token|secret|api ?key|ssn)\b/i.test(val)) return false;
-    var f = label + ': ' + val, a = learnedGet(), key = f.toLowerCase();
-    var single = /^(?:Name|Lives in|Works as|Studies|Age|Birthday|Speaks)$/.test(label);              // one value only: a newer one replaces the old one
-    a = a.filter(function (m) { return m.f.toLowerCase() !== key && !(single && m.f.indexOf(label + ': ') === 0); });
-    a.push({ f: f, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); return true;
-  }
+  /* ------------------------------------------------------------------ name: Jarvis only remembers what to call you ("my name is ...") */
+  function learnedGet() { return []; }
+  function learnedAdd(label, val) { if (label === 'Name' && val) { S.name = String(val).slice(0, 40); save(); return true; } return false; }
   function learnFrom(text) {
-    if (S.learn === false || !text || text.length > 300 || /[?]\s*$/.test(text)) return;
-    var t = text.replace(/\s+/g, ' ').trim(), m, end = '(?=[.,!;]|\\s+(?:and|but|so|because)\\b|$)';
-    function g(re) { return (m = t.match(re)) ? m[1] : null; }
-    var v;
-    if ((v = g(new RegExp("\\b(?:my name is|call me|you can call me) ([A-Za-z][\\w' -]{1,30}?)" + end, 'i')))) learnedAdd('Name', v.replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }));
-    if ((v = g(new RegExp("\\bi (?:live|stay|reside) in ([A-Za-z][\\w ,'-]{1,40}?)" + end, 'i')))) learnedAdd('Lives in', v);
-    else if ((v = g(new RegExp("\\bi(?:'m| am) from ([A-Za-z][\\w ,'-]{1,40}?)" + end, 'i')))) learnedAdd('Lives in', v);
-    if ((v = g(new RegExp("\\bi work (?:as an? |as |at |for |in )([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Works as', v);
-    else if ((v = g(new RegExp("\\bi(?:'m| am) an? ((?:[\\w-]+ ){0,2}(?:student|developer|engineer|doctor|teacher|designer|programmer|nurse|driver|artist|writer|freelancer|manager|businessman|entrepreneur|musician|farmer))" + end, 'i')))) learnedAdd('Works as', v);
-    if ((v = g(new RegExp("\\bi (?:study|am studying|'m studying) ([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Studies', v);
-    if ((v = g(/\bi(?:'m| am) (\d{1,2}) years? old\b/i))) learnedAdd('Age', v);
-    if ((v = g(new RegExp("\\bmy birthday is ([\\w ,/-]{3,25}?)" + end, 'i')))) learnedAdd('Birthday', v);
-    if ((v = g(new RegExp("\\bi speak ([A-Za-z ,&]{3,40}?)" + end, 'i')))) learnedAdd('Speaks', v);
-    if ((v = g(new RegExp("\\bi (?:really )?(?:like|love|enjoy|prefer) ((?!you\\b|it\\b|that\\b|this\\b|when\\b)[\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Likes', v);
-    if ((v = g(new RegExp("\\bi (?:really )?(?:hate|dislike|can't stand|cannot stand) ((?!you\\b|it\\b|that\\b|this\\b)[\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd('Dislikes', v);
-    if ((m = t.match(new RegExp("\\bmy (favou?rite [a-z ]{3,20}?) is ([\\w &'-]{2,40}?)" + end, 'i')))) learnedAdd(m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase().replace('favorite', 'favourite'), m[2]);
-    if ((m = t.match(new RegExp("\\bmy (wife|husband|brother|sister|mother|mom|father|dad|son|daughter|girlfriend|boyfriend|best friend|friend|boss|teacher)(?:'s name)? (?:is|are) (?:called |named )?([A-Z][\\w' -]{1,30}?)" + end)))) learnedAdd('My ' + m[1], m[2]);
-    if ((v = g(new RegExp("\\bi have an? ((?:[a-z]+ )?(?:dog|cat|car|bike|motorcycle|brother|sister|son|daughter|laptop|business|shop|channel|startup|project)(?: called [A-Z]\\w+| named [A-Z]\\w+)?)" + end, 'i')))) learnedAdd('Has', v);
+    if (!text || text.length > 120 || /[?]\s*$/.test(text) || S.name) return;
+    var m = text.match(/\b(?:my name is|call me|you can call me) ([A-Za-z][\w' -]{1,30}?)(?:[.,!]|\s+and\b|\s*$)/i);
+    if (m) learnedAdd('Name', m[1].replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }));
   }
-  function learnedText() { return S.learn === false ? '' : learnedGet().map(function (m) { return m.f; }).join('; ').slice(0, 900); }
+  function learnedText() { return ''; }
 
   /* ------------------------------------------------------------------ memory: facts the user asked Jarvis to remember (stored encrypted on the phone) */
   function memGet() { try { var a = JSON.parse(store.get('mem') || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && typeof x.f === 'string'; }) : []; } catch (e) { return []; } }
@@ -1658,7 +1636,6 @@
         return B.screenShot().then(function (r) { return { ok: !!(r && r.ok), text: (r && r.text) || '', msg: r && r.ok ? '' : 'I could not read the screen.' }; });
       },
       flash: PC ? null : function (on) { doAction('torch', on ? 'on' : 'off'); },
-      hidden: function (id) { return (S.toolsOff || []).indexOf(id) >= 0; },
       saveImage: PC ? null : function (name, dataUrl) {
         try { var r = B.saveImage(name, String(dataUrl).replace(/^data:image\/png;base64,/, '')); toast(r, 3500); } catch (e) { toast('Could not save the picture.', 3000); }
       },
@@ -1678,6 +1655,7 @@
   var emReady = false;
   /* One short AI question outside the normal chat (used by the emergency chat when online): no tags, no history, tries each provider in your order. */
   function askDirect(system, userText, cb) {
+    var msgs = Array.isArray(userText) ? userText : [{ role: 'user', content: userText }];
     var order = providerOrder();
     if (!B || !order.length || navigator.onLine === false) { cb({ ok: false, error: 'offline' }); return; }
     var pos = 0;
@@ -1686,7 +1664,7 @@
       var timer = setTimeout(function () { if (pendingChat[id]) { delete pendingChat[id]; fail('slow'); } }, 40000);
       pendingChat[id] = function (d) { clearTimeout(timer); if (d.ok) cb({ ok: true, text: String(d.text || '').replace(/\[\[[^\]]*\]\]/g, '').trim() }); else fail(d.error); };
       function fail(m) { if (++pos < order.length) next(); else cb({ ok: false, error: m || 'failed' }); }
-      B.chat(id, p.type, p.base, p.key, p.model, JSON.stringify([{ role: 'user', content: userText }]), system);
+      B.chat(id, p.type, p.base, p.key, p.model, JSON.stringify(msgs), system);
     })();
   }
   function openEmergency() {
@@ -1698,7 +1676,7 @@
         copy: function (t) { copyTxt(t); }, requestLocation: function () { try { B.requestLocation(); } catch (e) { toast('Open Android settings and allow location for Jarvis.', 4000); } },
         confirm: function (q, yes) { yes(); }, shareToPc: function (t) { try { shareToPc(t); } catch (e) { /* not linked */ } },
         speak: function (t) { try { speakText(t); } catch (e) { /* ignore */ } }, stopSpeak: function () { try { stopSpeakingNow(); } catch (e) { /* ignore */ } },
-        ask: askDirect, online: function () { return navigator.onLine !== false && providerOrder().length > 0; }, name: function () { return addrName(); }
+        ask: askDirect, style: function () { return String(STYLE_TEXT[S.style || 'jarvis'] || '').replace(/\{name\}/g, addrName() || 'sir'); }, online: function () { return navigator.onLine !== false && providerOrder().length > 0; }, name: function () { return addrName(); }
       });
       toolsInit();
     }
@@ -1723,10 +1701,6 @@
     if (/^(?:do you (?:know|remember) my name|what(?:'s| is) my name|who am i)$/.test(t)) {
       var n = addrName();
       return { kind: 'ui', fn: function () { }, text: n ? 'Yes, you are ' + n + '.' : 'Not yet. What should I call you?', silent: false, noHistory: true };
-    }
-    if (/^(?:what do you know about me|tell me about me|what have you learned about me)$/.test(t)) {
-      var l = learnedGet();
-      return { kind: 'ui', fn: function () { }, text: l.length ? 'Here is what I know: ' + l.slice(0, 8).map(function (x) { return x.f; }).join('. ') + '. You can edit all of it in Settings, About me.' : 'Nothing yet. Tell me about yourself, for example "my name is ..." or "I live in ...", and I will remember it.', silent: false, noHistory: true };
     }
     if ((m = /^(?:my name is|call me|you can call me|i am called) ([a-z][\w' -]{0,30})$/i.exec(String(raw).trim().replace(/[.!]+$/, '')))) {
       var nm = m[1].replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
@@ -2717,12 +2691,19 @@
   function hudBuild() {
     var st = document.getElementById('stage'); if (!st || HUD.built) return; HUD.built = true;
     var L = el('div', 'pchud l'), R = el('div', 'pchud r'); L.setAttribute('aria-hidden', 'true'); R.setAttribute('aria-hidden', 'true');
+    hudPanel(L, 'clk', 'TIME', '<div class="hp-f" data-f></div>');
     hudPanel(L, 'cpu', 'PROCESSOR', '<canvas width="220" height="34"></canvas><div class="hp-cores"></div>');
     hudPanel(L, 'ram', 'MEMORY', '<canvas width="220" height="34"></canvas><div class="hp-f" data-f></div>');
     hudPanel(L, 'sto', 'STORAGE', '<div class="hp-bar"><i data-bar></i></div><div class="hp-f" data-f></div>');
+    hudPanel(L, 'apps', 'TOP PROGRAMS', '<ul class="hp-apl"></ul>');
     hudPanel(R, 'scan', 'SYSTEM SCAN', '<div class="hp-sc"><div class="radar"><i class="sweep"></i><i class="blip b1"></i><i class="blip b2"></i><i class="blip b3"></i></div><ul class="hp-chk"></ul></div><div class="hp-bar"><i data-bar></i></div><div class="hp-f" data-f>INITIALISING</div>');
     hudPanel(R, 'net', 'NETWORK & LINK', '<canvas width="220" height="34"></canvas><div class="hp-f" data-f></div>');
+    hudPanel(R, 'deck', 'QUICK CONTROLS', '<div class="hp-dkg"></div>');
     hudPanel(R, 'task', 'WORKING ON', '<ul class="hp-tasks"></ul>');
+    var dk = R.querySelector('.hp-dkg');
+    [['LOCK', 'lock', ''], ['MUTE', 'volume', 'mute'], ['VOL −', 'volume', 'down'], ['VOL +', 'volume', 'up'], ['PLAY', 'media', 'play'], ['SHOT', 'screenshot', '']].forEach(function (x) {
+      var q = el('button', '', x[0]); q.addEventListener('click', function () { try { Promise.resolve(B.actionAsync(x[1], x[2], '')).then(function (r) { toast(r && r.msg ? r.msg : 'Done', 1500); }); } catch (e) { toast('Not available', 1500); } }); dk.appendChild(q);
+    });
     st.appendChild(L); st.appendChild(R);
     var cores = L.querySelector('.hp-cores'); for (var i = 0; i < 16; i++) cores.appendChild(el('i'));
     var chk = R.querySelector('.hp-chk'); ['CORE', 'MEMORY', 'STORAGE', 'LINK', 'ENCRYPTION'].forEach(function (n) { var li = el('li'); li.innerHTML = '<s></s>' + n; chk.appendChild(li); });
@@ -2750,10 +2731,18 @@
     bar.style.width = Math.min(100, Math.round(Math.min(s, chk.length) * 100 / chk.length)) + '%';
     HUD.els.scan.querySelector('[data-f]').textContent = s < chk.length ? 'SCANNING ' + chk[Math.min(s, chk.length - 1)].textContent : (all ? 'ALL SYSTEMS NOMINAL' : 'ATTENTION NEEDED');
     HUD.els.scan.querySelector('[data-v]').textContent = s < chk.length ? Math.round(s * 100 / chk.length) + '%' : '100%';
+    var nw = new Date(); q('clk', '[data-v]').textContent = nw.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    q('clk', '[data-f]').textContent = nw.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + (d.uptimeMin !== undefined ? ' · UP ' + Math.floor(d.uptimeMin / 60) + 'H' : '');
+    if (now - (HUD.pAt || 0) > 12000 && B && B.procs && HUD.els.apps) { HUD.pAt = now; try { B.procs().then(function (l) { hudProcs(l || []); }, function () {}); } catch (e) {} }
     // network
     var cn = navigator.connection || {}, rtt = cn.rtt, dl = cn.downlink; HUD.net = HUD.net || []; HUD.net.push(navigator.onLine === false ? 0 : (typeof rtt === 'number' ? rtt : 0)); if (HUD.net.length > 60) HUD.net.shift();
     q('net', '[data-v]').textContent = navigator.onLine === false ? 'OFFLINE' : (typeof rtt === 'number' ? rtt + ' ms' : 'ONLINE'); hudSpark(q('net', 'canvas'), HUD.net, Math.max(200, Math.max.apply(null, HUD.net)), false);
     q('net', '[data-f]').textContent = (ls.paired ? 'PHONE ' + (ld.connected === false ? 'OFFLINE' : 'LINKED') : 'PHONE NOT LINKED') + (typeof dl === 'number' ? ' · ' + dl + ' MBPS' : '');
+  }
+  function hudProcs(list) {
+    var ul = HUD.els.apps && HUD.els.apps.querySelector('.hp-apl'); if (!ul) return; ul.innerHTML = '';
+    var mx = list.length ? list[0].mb : 1; HUD.els.apps.querySelector('[data-v]').textContent = list.length ? String(list.length) : '--';
+    list.slice(0, 5).forEach(function (p) { var li = el('li'), nm = String(p.name || '').slice(0, 18); li.innerHTML = '<span></span><em></em><i></i>'; li.firstChild.textContent = nm; li.children[1].textContent = p.mb >= 1024 ? (p.mb / 1024).toFixed(1) + ' GB' : p.mb + ' MB'; li.lastChild.style.width = Math.max(6, Math.round(p.mb * 100 / mx)) + '%'; ul.appendChild(li); });
   }
   function hudTasks() {
     var ul = HUD.els.task && HUD.els.task.querySelector('.hp-tasks'); if (!ul) return;
@@ -2809,8 +2798,8 @@
 
   /* ------------------------------------------------------------------ character: personality, emotions, reply style */
   var STYLES = [
-    ['friend', 'Friend: warm, caring, natural (default)'],
-    ['jarvis', 'Classic Jarvis: formal and dry, like the films'],
+    ['jarvis', 'Jarvis: formal, calm and dry, like the films (default)'],
+    ['friend', 'Friend: warm, caring, natural'],
     ['sharp', 'Sharp & brief — fewest words, no small talk'],
     ['playful', 'Playful — cheeky banter, still accurate']
   ];
@@ -3236,7 +3225,7 @@
     }
   }
   function gearPulse(on) { $('#btn-settings').classList.toggle('pulse', !!on); }
-  function tickClock() { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  function tickClock() { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); }
 
   /* ------------------------------------------------------------------ settings UI */
   var settingsOpen = false;
@@ -3259,6 +3248,7 @@
   var settingsPage = '', showSettingsPage = null, rankRedraw = [];
   function promote(id) { var o = cleanOrder(S.aiOrder, PROVIDERS.map(function (p) { return p.id; })); o.splice(o.indexOf(id), 1); o.unshift(id); S.aiOrder = o; }
   var ICONS = {
+    'TOOLS': '<path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 9V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/><path d="M3 13h18M11 12v3h2v-3"/>',
     'EMERGENCY': '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v6M9 11h6"/>',
     'SETUP CHECK': '<path d="M5 12l5 5 9-10"/>',
     'AI CORE': '<circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3"/>',
@@ -3288,9 +3278,8 @@
     ['DEVICE LINK', PC ? 'Control this PC from your phone and your phone from here' : 'Control your PC from this phone and this phone from your PC'],
     ['APPEARANCE', 'Interface colour theme'],
     ['CONVERSATIONS & COMMANDS', 'History, command cards, system graphs'],
-    ['TOOLS', 'Choose which helper tools Jarvis shows'],
+    ['TOOLS', 'Encoders, QR codes, converter, speed test and more'],
     ['SECURITY', 'Screen-lock and privacy options'],
-    ['EMERGENCY', 'Loud alarm, SOS light, Morse, location, survival guide'],
     ['BACKUP & RESTORE', 'Save or restore your keys, notes and PC link'],
     ['DATA', 'Clear chat or wipe everything']
   ];
@@ -3304,14 +3293,20 @@
     var menu = el('div', 'smenu');
     var bad = scBox ? scBox.querySelectorAll('.btn').length : 0, nLink = providerOrder().length;
     MENU.forEach(function (it) {
-      if (!secs[it[0]]) return;
+      if (!secs[it[0]] && it[0] !== 'TOOLS') return;
       var b = el('button', 'sitem');
       b.innerHTML = '<span class="sg"><svg viewBox="0 0 24 24">' + (ICONS[it[0]] || '') + '</svg></span><span class="st"><b>' + esc(it[0]) + '</b><small>' + esc(it[1]) + '</small></span>' +
         (it[0] === 'SETUP CHECK' ? '<span class="sbd' + (bad ? '' : ' ok') + '">' + (bad ? bad + ' to fix' : 'ALL READY') + '</span>' : '') +
         (it[0] === 'AI CORE' ? '<span class="sbd' + (nLink ? ' ok' : '') + '">' + (nLink ? nLink + ' READY' : 'NO KEY') + '</span>' : '') + '<span class="chev">›</span>';
-      b.addEventListener('click', function () { haptic(); showSettingsPage(it[0]); });
+      b.addEventListener('click', function () { haptic(); if (it[0] === 'TOOLS') openTools(); else showSettingsPage(it[0]); });
       menu.appendChild(b);
     });
+    if (!PC) {
+      var emb = el('button', 'em-launch');
+      emb.innerHTML = '<span class="eml-ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v6M9 11h6"/></svg></span><span class="eml-t"><b>EMERGENCY</b><small>Siren, SOS light, location, survival book, radio</small></span><span class="eml-go">ENTER</span>';
+      emb.addEventListener('click', function () { haptic(); closeSettings(); setTimeout(openEmergency, 250); });
+      menu.insertBefore(emb, menu.firstChild);
+    }
     body.insertBefore(menu, body.firstChild);
     showSettingsPage = function (name) {
       settingsPage = secs[name] ? name : '';
@@ -3845,52 +3840,6 @@
     STYLES.forEach(function (o) { var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((S.style || 'jarvis') === o[0]) op.selected = true; sty.appendChild(op); });
     sty.addEventListener('change', function () { S.style = sty.value; save(); toast('Reply style changed'); });
     nc.appendChild(field('REPLY STYLE', sty)); s3.appendChild(nc);
-    s3.appendChild(el('div', 'dl-note', 'ABOUT ME: what Jarvis knows about you. He fills it in by himself from our chats and keeps only the important details. Edit, delete or add lines any time. Everything stays encrypted on this device.'));
-    s3.appendChild(toggleRow('Learn about me from our chats', 'Jarvis notes only the important facts you tell him (name, city, work, likes, family names…), never passwords, numbers or whole conversations. Stored on this device only.', function () { return S.learn !== false; }, function (v) { S.learn = v; }));
-    var lc = el('div', 'card'); lc.style.padding = '10px 14px';
-    lc.appendChild(el('div', 'card-n', '<b>About me</b><small>Jarvis uses these only when you ask about yourself or when they clearly help an answer. Tap a line to edit it.</small>'));
-    var ll = el('div'); ll.style.marginTop = '8px'; lc.appendChild(ll);
-    function drawLearned() {
-      ll.innerHTML = ''; var all = learnedGet();
-      if (!all.length) ll.appendChild(el('div', 'empty-note', 'Nothing yet. As you talk, Jarvis adds the important things here (for example your name, city, work or interests). You can also add them yourself below.'));
-      all.forEach(function (m, idx) {
-        var r = el('div'); r.style.cssText = 'display:flex;gap:6px;align-items:center;margin:5px 0';
-        var i2 = el('input'); i2.type = 'text'; i2.value = m.f; i2.maxLength = 200; i2.spellcheck = false; i2.style.flex = '1';
-        i2.addEventListener('change', function () { var a = learnedGet(); var v = i2.value.replace(/\s+/g, ' ').trim().slice(0, 200); if (v) a[idx].f = v; else a.splice(idx, 1); S.learned = a; save(); drawLearned(); });
-        var x = el('button', 'btn', '✕'); x.style.cssText = 'padding:6px 12px;min-width:0'; x.setAttribute('aria-label', 'Delete');
-        x.addEventListener('click', function () { var a = learnedGet(); a.splice(idx, 1); S.learned = a; save(); haptic(); drawLearned(); });
-        var wf = el('label', 'fld'); wf.style.cssText = 'flex:1;margin:0'; wf.appendChild(i2); r.appendChild(wf); r.appendChild(x); ll.appendChild(r);
-      });
-      var add = el('input'); add.type = 'text'; add.placeholder = 'Add a detail, e.g. Likes: football'; add.maxLength = 200;
-      function addNow() { var v = add.value.replace(/\s+/g, ' ').trim().slice(0, 200); if (!v) return; var a = learnedGet(); a.push({ f: v, t: Date.now() }); S.learned = a.slice(-LEARN_MAX); save(); drawLearned(); }
-      add.addEventListener('keydown', function (e) { if (e.key === 'Enter') addNow(); });
-      var addRow = el('div'); addRow.style.cssText = 'display:flex;gap:6px;align-items:flex-end;margin-top:8px';
-      var addF = field('', add); addF.style.flex = '1'; addF.style.margin = '0'; addRow.appendChild(addF);
-      var addB = el('button', 'btn pri', 'ADD'); addB.style.cssText = 'padding:11px 16px;min-width:0'; addB.addEventListener('click', addNow); addRow.appendChild(addB);
-      ll.appendChild(addRow);
-      if (all.length) { var cl = el('button', 'btn danger', 'CLEAR EVERYTHING LEARNED'); cl.style.marginTop = '10px'; cl.addEventListener('click', function () { if (!cl.getAttribute('data-sure')) { cl.setAttribute('data-sure', '1'); cl.textContent = 'TAP AGAIN TO CONFIRM'; return; } S.learned = []; save(); drawLearned(); }); ll.appendChild(cl); }
-    }
-    drawLearned(); s3.appendChild(lc);
-    var xc = el('div', 'card'); xc.style.padding = '12px 14px';
-    xc.appendChild(el('div', 'card-n', '<b>Take my memory anywhere</b><small>Move what Jarvis knows about you to another AI app, or bring your memory from another AI into Jarvis.</small>'));
-    var xr = el('div', 'row'); xr.style.cssText = 'margin-top:8px;flex-wrap:wrap;gap:8px';
-    var cb = el('button', 'btn pri', 'COPY MY MEMORY');
-    cb.addEventListener('click', function () { var l = learnedGet(); if (!l.length) { toast('Nothing to copy yet'); return; } copyTxt('About me (my memory from Jarvis). Please remember this about me:\n' + l.map(function (m) { return '- ' + m.f; }).join('\n')); toast('Copied. Paste it into any AI app', 2500); });
-    var pb2 = el('button', 'btn', 'GET PROMPT FOR OTHER AI');
-    pb2.addEventListener('click', function () { copyTxt('Please write down everything you have learned and remember about me (my name, where I live, work or study, languages, interests, goals, family and friends I mentioned, and how I like answers). Reply with only short lines, one fact per line, in the form "Label: detail", for example "Name: ...". No intro, no comments, nothing private like passwords or card numbers.'); toast('Copied. Paste it into the other AI, then paste its answer below', 3500); });
-    xr.appendChild(cb); xr.appendChild(pb2); xc.appendChild(xr);
-    var imp = el('textarea'); imp.placeholder = 'Paste the other AI’s answer (or any notes about you) here'; imp.style.minHeight = '90px'; imp.spellcheck = false;
-    var impF = field('IMPORT MEMORY', imp); impF.style.marginTop = '10px'; xc.appendChild(impF);
-    var ib = el('button', 'btn', 'ADD TO MY MEMORY'); ib.style.marginTop = '8px';
-    ib.addEventListener('click', function () {
-      var lines = String(imp.value).split(/\n|;/).map(function (x) { return x.replace(/^[\s\-*•\d.)]+/, '').replace(/\s+/g, ' ').trim(); }).filter(function (x) { return x.length > 2 && !/^(about me|here is|here are|memory|sure|okay|ok)\b.*:?$/i.test(x) && !/\b(password|passcode|otp|cvv|card number|api ?key|secret)\b/i.test(x); });
-      if (!lines.length) { toast('Nothing to add'); return; }
-      var a = learnedGet(), have = {}; a.forEach(function (m) { have[m.f.toLowerCase()] = 1; });
-      var added = 0; lines.slice(0, 40).forEach(function (x) { x = x.slice(0, 200); if (!have[x.toLowerCase()]) { a.push({ f: x, t: Date.now() }); have[x.toLowerCase()] = 1; added++; } });
-      S.learned = a.slice(-LEARN_MAX); save(); imp.value = ''; drawLearned(); toast(added + ' added', 2500);
-    });
-    xc.appendChild(ib); s3.appendChild(xc);
-    s3.appendChild(toggleRow('Share my profile with the AI', 'The details above are sent with your messages to the AI service you chose, so answers fit you. Switch off to keep them on this device only.', function () { return S.aboutOn !== false; }, function (v) { S.aboutOn = v; }));
     s3.appendChild(toggleRow('Emotions', 'Jarvis shows feelings: his orb colour and voice change with the mood of each reply', function () { return S.emotions !== false; }, function (v) { S.emotions = v; }));
     var pr = el('textarea'); pr.value = S.systemPrompt && S.systemPrompt.trim() ? S.systemPrompt : DEFAULT_PROMPT; pr.spellcheck = false;
     pr.addEventListener('input', function () { S.systemPrompt = pr.value.trim() === DEFAULT_PROMPT.trim() ? '' : pr.value; save(); });
@@ -3949,21 +3898,6 @@
     body.appendChild(buildLinkSection());
 
 
-    if (!PC) {
-      var sE = section('EMERGENCY', 'For the phone you carry everywhere. Works with no internet and uses no AI tokens.');
-      var eb = el('div', 'card'); eb.style.padding = '14px';
-      eb.appendChild(el('p', 'hint', 'Open emergency mode for a loud survival siren and whistle, SOS and Morse with the flashlight, a screen strobe, your live location, an emergency card and a survival guide. Find my phone uses the same loud siren. Say “emergency” or “SOS” any time.'));
-      var ebtn = el('button', 'btn pri', 'OPEN EMERGENCY MODE'); ebtn.addEventListener('click', function () { closeSettings(); openEmergency(); }); eb.appendChild(ebtn);
-      var lbtn = el('button', 'btn', 'ALLOW LOCATION (FOR SHARING AND THE PC MAP)'); lbtn.style.marginTop = '8px'; lbtn.addEventListener('click', function () { try { B.requestLocation(); } catch (e) { toast('Open Android settings and allow location for Jarvis.', 4000); } }); eb.appendChild(lbtn);
-      var tbtn = el('button', 'btn', 'TEST THE LOUD SIREN (3 SECONDS)'); tbtn.style.marginTop = '8px'; tbtn.addEventListener('click', function () { doAction('emsound', 'siren', ''); setTimeout(function () { doAction('emsound', 'off', ''); }, 3000); }); eb.appendChild(tbtn);
-      sE.appendChild(eb); body.appendChild(sE);
-    }
-    var sT = section('TOOLS', 'Small helpers that run on this device and use none of your AI tokens. Switch off the ones you do not need.');
-    var tbtn0 = el('button', 'btn pri', 'OPEN TOOLS'); tbtn0.style.marginBottom = '10px'; tbtn0.addEventListener('click', function () { closeSettings(); openTools(); }); sT.appendChild(tbtn0);
-    (window.JarvisTools && window.JarvisTools.list ? (toolsInit(), window.JarvisTools.list()) : []).forEach(function (t) {
-      sT.appendChild(toggleRow(t.name, t.desc, function () { return (S.toolsOff || []).indexOf(t.id) < 0; }, function (v) { var a = (S.toolsOff || []).filter(function (x) { return x !== t.id; }); if (!v) a.push(t.id); S.toolsOff = a; }));
-    });
-    body.appendChild(sT);
     // --- security
     var s6 = section('SECURITY', 'Your keys are stored encrypted on this phone and never leave it except to the AI service you chose.');
     if (!PC) s6.appendChild(toggleRow('Lock Jarvis with my phone’s screen lock', 'Ask for fingerprint / PIN when opening Jarvis after a minute away',
@@ -3999,7 +3933,7 @@
     var sm = section('USER MANUAL', 'A simple guide to set up and use Jarvis. Tap a step to open it.');
     var MAN = [
       ['1 · First start', '<p>Open Jarvis and tap the screen once after the boot animation. When Android asks for permissions, tap <b>Allow</b> for the <b>microphone</b> (so Jarvis can hear you) and, if you want Jarvis to call people, <b>phone</b> and <b>contacts</b>. You can change these later in <b>Settings › Phone Access</b>.</p>'],
-      ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. Phone commands such as opening apps, time, battery and timers work without it.</p><ol><li>Open <b>Settings › AI Core</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next. Choose the order yourself in <b>Settings › Fallback Order</b> (number 1 is used first).</p>' +
+      ['2 · Add a free AI key (needed for chatting)', '<p>Jarvis needs an AI “key” to answer questions. ' + (PC ? 'PC commands such as opening apps, volume and locking work without it.' : 'Phone commands such as opening apps, time, battery and timers work without it.') + '</p><ol><li>Open <b>Settings › AI Core</b>.</li><li>Pick <b>Google Gemini</b> (free and quickest).</li><li>Tap <b>GET FREE KEY</b>. Sign in with your Google account and create a key.</li><li>Copy the key, come back to Jarvis and paste it into the key box.</li><li>Tap <b>Test</b>. When it shows a green dot, you are ready.</li></ol><p>You can add more than one provider. If one fails or runs out, Jarvis tries the next. Choose the order yourself in <b>Settings › Fallback Order</b> (number 1 is used first).</p>' +
         '<h4>Custom AI — add any AI that is not in the list</h4>' +
         '<p>Almost every AI service offers an “OpenAI-style” API. The <b>Custom AI</b> card in AI Core works with all of them, so you are never limited to the names in the list. You need three things from that service: the <b>Base URL</b>, a <b>key</b> and a <b>model name</b>.</p>' +
         '<ol><li><b>Find the Base URL.</b> Open the service’s website and look for <i>API docs</i>, <i>Quickstart</i> or <i>OpenAI compatibility</i>. They show an example with <code>base_url</code> (or “endpoint”). Copy that address — it is usually the part <i>before</i> <code>/chat/completions</code> and often ends with <code>/v1</code>. Jarvis adds <code>/chat/completions</code> by itself, so do not type it.</li>' +
@@ -4010,9 +3944,9 @@
         '<p><b>Your own tiny AI:</b> if your AI runs on a server (your own computer, a Cloudflare Worker, Render, etc.) and answers at <code>…/v1/chat/completions</code> in the OpenAI format, put its address up to <code>/v1</code> as the Base URL, any text or your own token as the key, and its model name. Test it first in a browser or with curl.</p>' +
         '<p><b>If it fails:</b> “That address is a website, not an AI service” means the Base URL is the website address — look again in the API docs. “Not found” means a wrong model name or Base URL. “Key rejected” means the key is wrong or has spaces. Services that do not offer the OpenAI style (for example Anthropic and Gemini) already have their own cards in the list.</p>' +
         '<h4>Web search keys</h4><p>Under <b>Settings › Services</b> you can add <b>Tavily</b> and <b>SerpApi</b> (both free, no card). The <b>built-in free web search</b> needs no key. In <b>Fallback Order</b> rank them — put the built-in search first if you want answers from it first.</p>'],
-      ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>Commands</b> under the chat to see everything Jarvis understands.</p><p>For news, prices or anything recent, Jarvis searches the web by himself when a SerpApi or Tavily search key is added (a free search with no key also works).</p><p><b>Tools (no AI tokens):</b> tap <b>Tools</b> for a speed test, link safety check, QR codes, passwords, calculator, converter, Morse, timers and more. Try “speed test”, “what is 15% of 240”, “is bit.ly/abc safe”, “flip a coin”.</p>' + (PC ? '' : '<p><b>Emergency (phone):</b> say “emergency” or “SOS”, or open Settings › Emergency for the loud siren, whistle, SOS flashlight, Morse, location and a survival guide.</p>') + '<p><b>Skills:</b> “add milk to my shopping list”, “show my shopping list”, “generate a password”, “start a focus session”, “choose tea or coffee”, “spell necessary”. See <b>All commands</b> for more.</p><p><b>Phone controls:</b> brightness, Do Not Disturb, camera, screenshot, alarms, Spotify, WhatsApp and email drafts, calendar events and “what is on my screen”. Android only lets you flip Wi-Fi, Bluetooth, airplane mode and similar yourself, so Jarvis opens the right switch.</p>'],
+      ['3 · Talk or type', '<p>Tap the big <b>microphone</b> button and speak, or type in the box at the bottom. Try: “open YouTube”, “call Mom”, “what time is it”, “set a timer for 5 minutes”, “remind me to drink water at 5 pm”, “weather in Dhaka”, “navigate to Gulshan”.</p><p>Tap <b>Commands</b> under the chat to see everything Jarvis understands.</p><p>For news, prices or anything recent, Jarvis searches the web by himself when a SerpApi or Tavily search key is added (a free search with no key also works).</p><p><b>Tools (no AI tokens):</b> open <b>Settings › Tools</b> or say “open tools” for the speed test, link safety check, QR codes, encoders and decoders, converter, Morse code, daily calculators and the world clock. Try “speed test”, “what is 15% of 240”, “is bit.ly/abc safe”.</p>' + (PC ? '' : '<p><b>Emergency (phone):</b> say “emergency” or “SOS”, or tap the red EMERGENCY button at the top of Settings.</p>') + '<p><b>Skills:</b> “add milk to my shopping list”, “show my shopping list”, “start a focus session”, “spell necessary”. See <b>All commands</b> for more.</p>' + (PC ? '<p><b>PC controls:</b> “explain my screen”, volume, media keys, lock, screenshot, “open Notepad and write a letter about…”, and open any app or folder by name.</p>' : '<p><b>Phone controls:</b> brightness, Do Not Disturb, camera, screenshot, alarms, Spotify, WhatsApp and email drafts, calendar events and “what is on my screen”. Android only lets you flip Wi-Fi, Bluetooth, airplane mode and similar yourself, so Jarvis opens the right switch.</p>') + ''],
       ['4 · Let Jarvis type in other apps', '<p>To write a message, note or email inside another app, Jarvis needs the Accessibility switch.</p><ol><li>Open <b>Settings › Phone Access</b> and tap the accessibility button.</li><li>Find <b>Jarvis</b> in the list and switch it <b>on</b>. Confirm the Android warning.</li><li>Say, for example: “write a leave letter in Keep Notes” — Jarvis opens the app and types it.</li></ol><p>If the text stops partway, tap into the text box first and try again.</p><p><b>Reels and feeds:</b> with typing control on, say “scroll down”, “scroll up”, “next reel”, “previous reel”, “scroll down 3 times”, “scroll down a little”, “scroll to the top” or “stop scrolling”. These do not speak back, so you can keep watching.</p>'],
-      ['5 · Floating ball', '<p>The floating ball lets you talk to Jarvis from any screen. <i>On the PC it is a small orb at the screen edge: click it for chat, quick buttons, live PC stats and drop-a-link-to-phone. Ctrl+Alt+J shows or hides it. Turn it off in Settings › Appearance, from the tray icon, or by right-clicking the ball. It follows your colour theme.</i></p><ol><li>In <b>Settings › Phone Access</b> tap <b>Floating ball on / off</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
+      ['5 · Floating ball', PC ? '<p>The floating ball is a small orb at the screen edge. Click it for chat, quick buttons, live PC stats and drop-a-link-to-phone.</p><ul><li><b>Ctrl+Alt+J</b> shows or hides it.</li><li>Turn it on or off with the <b>Floating ball</b> button in PC Access, from the tray icon, or by right-clicking the ball.</li><li>It follows your colour theme.</li></ul>' : '<p>The floating ball lets you talk to Jarvis from any screen.</p><ol><li>In <b>Settings › Phone Access</b> tap <b>Floating ball on / off</b> and allow <b>Display over other apps</b> when Android asks.</li><li><b>Tap</b> the ball and speak. Tap again to stop.</li><li><b>Drag</b> it to move it. <b>Long-press</b> to open the full Jarvis app.</li></ol>'],
       ['6 · Weather and the home-screen widget', '<ol><li>Get a free key at openweathermap.org (tap <b>GET API KEY</b> in <b>Settings › Services › OpenWeather</b>).</li><li>Paste it there, type your <b>default city</b> (for example “Dhaka, BD”), choose units and tap <b>Test</b>.</li><li>On your home screen, long-press an empty spot › <b>Widgets</b> › <b>Jarvis</b> and place it.</li></ol><p>The widget shows time, date, weather, and battery / RAM / storage graphs. Tap it to open the System Monitor. There is also a small <b>Jarvis clock + battery</b> widget in the same Widgets list.</p>'],
       ['7 · Quick tile', '<ul><li><b>Quick tile:</b> pull down the notification shade, tap the pencil or edit icon and drag the <b>Jarvis</b> tile into your quick settings. Tap it to start talking.</li></ul>'],
       ['8 · Call help (answer by voice)', '<ol><li>Open <b>Settings › Phone Access</b> and switch on <b>Call help</b>. Allow every phone permission Android asks for.</li><li>When someone calls, Jarvis says their name (or number) and shows <b>Answer</b> and <b>Reject</b> buttons in the call notification.</li><li>Say <b>“answer”</b> or <b>“reject”</b>. Voice works when Jarvis can use the microphone: keep the <b>floating ball</b> on or the app open. If the microphone is blocked, use the notification buttons.</li><li>Inside Jarvis you can also say “answer the call” or “reject the call”.</li></ol>'],
@@ -4020,17 +3954,19 @@
       ['10 · Memory, safety and offline', '<ul><li>Say “remember my gym is at 6”, then ask “what is my gym time?”. Say “what do you remember” to see or delete everything.</li><li>Jarvis asks <b>yes / no</b> before sending a text or calling an emergency number. You can answer by voice. Change this in <b>Settings › Security</b>.</li><li>With no internet say “offline mode” to see what still works.</li></ul>'],
       ['11 · Link to your PC', '<p>Control your PC from this phone, and this phone from your PC, with a free private link.</p><ol><li>Open <b>Settings › Device Link</b> and follow the steps (rules have a COPY button).</li><li>Create the link on one device, paste the pairing code on the other.</li><li>Tap <b>RUN FULL CHECK</b>, then say “on my PC open Chrome”.</li></ol><p>Also: “send this to my PC”, “wake my PC”, “at 11 pm shut down my PC”, “back up my documents”, “open the touchpad” (mouse, keys, Ctrl+Shift+Alt shortcuts), and “find my phone” (from the PC). Typing, calls and power stay <b>off</b> until you switch them on.</p>'],
       ['12 · Voice and language', '<p>In <b>Settings › Voice</b> choose the voice style, speed and language (English, Bangla or Hindi). Use <b>TEST ENGLISH</b> and the other test buttons to hear it. If a voice sounds wrong, install the language voice from your phone’s text-to-speech settings.</p>'],
-      ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p><p><b>About me:</b> below that, fill in the ABOUT ME card (work, city, interests, goals, how you like answers). Jarvis uses it to personalise replies; it is optional and you can stop sharing it with the AI by switching off <b>Share my profile with the AI</b>.</p>'],
-      ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this phone and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p><p><b>Uninstalling</b> Jarvis erases every key and setting on that device, so the next person starts clean. Updating keeps them.</p>'],
+      ['13 · Your name and style', '<p>In <b>Settings › Personality</b> set what Jarvis calls you and how he behaves. In <b>Settings › Appearance</b> change the colour theme (cyan, amber, red, green, purple, Mark or Friday).</p><p>The default reply style is <b>Jarvis</b>: calm, formal and dry, like the films. Switch to <b>Friend</b>, <b>Sharp</b> or <b>Playful</b> any time. Say “my name is …” and Jarvis uses it.</p>'],
+      ['14 · Keep your data safe', '<p>Your keys are stored encrypted on this ' + (PC ? 'PC' : 'phone') + ' and are only sent to the AI service you chose. Use <b>Settings › Backup &amp; Restore</b> to make an encrypted backup code with your own passphrase — save both somewhere safe. If you lose the passphrase, the backup cannot be opened. <b>Settings › Security</b> has the screen-lock option.</p><p><b>Uninstalling</b> Jarvis erases every key and setting on that device, so the next person starts clean. Updating keeps them.</p>'],
             ['15 · Wake the PC', '<p>Switch your PC on from this phone, even when it is off or asleep.</p><ol><li>Open <b>Settings › Device Link › WAKE THE PC</b> while the PC is on and linked.</li><li>Tap <b>LEARN FROM PC</b>, then <b>SAVE</b> (or type the address yourself).</li><li>Tap <b>SET UP ON PC</b> once, so the PC network card accepts the wake signal.</li><li>Later, tap <b>WAKE NOW</b> or say “wake my PC”. Jarvis tells you when the PC is awake.</li></ol><p>The phone must be on the <b>same Wi-Fi</b> as the PC, and <b>Wake-on-LAN</b> must be on in the PC’s BIOS. A PC that is fully powered off on battery, or a laptop with the lid closed, may not wake.</p>'],
-      ['16 · Calendar and dashboard', '<p>Say <b>“dashboard”</b> for one screen with the time, weather, your next events, reminders, notes and battery.</p><ul><li>Say “what is on my calendar”, “calendar tomorrow” or “next meeting”.</li><li>The first time, tap <b>ALLOW CALENDAR</b> on the dashboard. Jarvis only <b>reads</b> titles, times and places. Nothing is changed or uploaded.</li><li>On the PC the dashboard shows your phone calendar through the private link.</li></ul>'],
+      ['16 · Calendar and dashboard', '<p>Say <b>“dashboard”</b> for one screen with the time, weather, your next events, reminders, notes and battery.</p><ul><li>Say “what is on my calendar”, “calendar tomorrow” or “next meeting”.</li>' + (PC ? '<li>The PC dashboard shows your phone calendar through the private link. Jarvis only <b>reads</b> titles, times and places.</li><li>It also shows live processor, memory and storage, plus a control deck of quick buttons.</li></ul>' : '<li>The first time, tap <b>ALLOW CALENDAR</b> on the dashboard. Jarvis only <b>reads</b> titles, times and places. Nothing is changed or uploaded.</li></ul>') + ''],
       ['17 · PC voice and “Jarvis”', '<ul><li>On the PC, voice comes first: Jarvis keeps listening after each reply (say “stop” to end).</li><li><b>Ctrl+Alt+Space</b> starts listening from anywhere.</li><li>Switch on <b>Say “Jarvis” to wake him</b> in Settings › PC Access. Say “Jarvis” alone, or “Jarvis, open Chrome” in one go.</li><li>Only short bursts of speech are sent for transcription (at most 10 a minute). Anything without his name is discarded. Switch it off any time.</li><li><b>Clap twice</b> (Settings › PC Access) wakes him; <b>Quit Jarvis</b> is in the tray menu and Settings.</li></ul><p><b>Follow-ups:</b> after “play a song on my PC”, short commands such as pause, next, volume up or “play another song” keep going to the PC (and the same way for the phone) for 15 minutes. Say “back to this phone” to stop. New songs play in the same YouTube tab Jarvis opened and never touch your other tabs.</p><p><b>PC voice:</b> “rewind 10 seconds”, “forward 10 seconds”, “full screen”, “click Skip”, “switch to Chrome”, “close window”, “press Ctrl Shift T”.</p>'],
-      ['18 · Tools', '<p>Open <b>Tools</b> from the chips, from <b>Settings › Tools</b>, or say “open tools”.</p><ul><li><b>Encoders and decoders:</b> Base64, Base32, hex, binary, URL, HTML, ROT13, Morse, Caesar, MD5, SHA-1, SHA-256 and CRC32.</li><li><b>QR codes:</b> make a QR for text, a link or Wi-Fi, then tap <b>SAVE</b> to download it as a picture (phone: Pictures/Jarvis).</li><li><b>Link safety check, network speed, converter, daily calculators, world clock, Morse.</b></li><li>On the PC there is also a QR reader for the screen.</li></ul>'],
-      ['19 · Emergency mode (phone)', '<p>Say <b>“emergency”</b>, use the Emergency chip, or add the <b>Jarvis emergency</b> widget to your home screen. The whole screen turns red.</p><ul><li><b>Tap to start, tap again to stop:</b> SIREN, WHISTLE, SOS LIGHT, STROBE, MORSE and LOCATION. The siren plays at full volume even on silent.</li><li><b>Talk to Jarvis:</b> a small Jarvis stays with you and answers only emergencies, out loud. Without internet it uses the built-in guide. With internet and an AI key it thinks through your exact situation.</li><li><b>Survival Book:</b> chapters with steps, what not to do and tips: fire, water, shelter, first aid, floods, earthquakes and more. Works fully offline.</li><li><b>Location:</b> live position, open map, and a ready text with your location. You press send.</li><li><b>Emergency card</b> and <b>battery saver</b>. Always call 999 or 112 first if someone is in danger.</li></ul><p>The home-screen widget has SIREN, SOS LIGHT and OPEN buttons, each a toggle.</p>'],
+      ['18 · Tools', '<p>Open <b>Settings › Tools</b> (the toolbox), or say “open tools”. Tap a tool; the back button returns to the toolbox, then to Settings.</p><ul><li><b>Encoders and decoders:</b> Base64, Base32, hex, binary, URL, HTML, ROT13, Morse, Caesar, MD5, SHA-1, SHA-256 and CRC32.</li><li><b>QR codes:</b> make a QR for text, a link or Wi-Fi, then tap <b>SAVE</b> to download it as a picture' + (PC ? '.' : ' (Pictures/Jarvis).') + '</li><li><b>Network speed:</b> ping, download and upload. It uses about 40 MB of data.</li><li><b>Link safety check, converter, daily calculators, world clock and Morse.</b></li>' + (PC ? '<li>PC tools: system health, biggest programs, tidy Downloads, clean temp files, and a QR reader for the screen.</li>' : '') + '</ul>'],
+      ['19 · Emergency mode', PC ? '<p>Emergency mode lives on the phone. From the PC you can use the floating ball or say “find my phone” and “where is my phone” to ring it loudly or see its location through the private link.</p>' : '<p>Tap the red <b>EMERGENCY</b> button at the top of Settings, say <b>“emergency”</b>, or add the <b>Jarvis emergency</b> widget to your home screen. A red start-up animation shows what is ready, then the sections open.</p><ul><li><b>SIGNALS:</b> SIREN, WHISTLE, SOS LIGHT, STROBE, MORSE and LOCATION. Tap to start, tap again to stop. The siren plays at full volume even on silent.</li><li><b>TALK:</b> Jarvis stays with you and answers only emergencies, out loud, in his normal voice. With internet and an AI key he thinks through your exact situation; with no internet he answers from the built-in Survival Book.</li><li><b>LOCATE:</b> live position, open the map, copy it, or write a text with your location (you tap send).</li><li><b>GUIDE:</b> the Survival Book with chapters, steps, what not to do and tips, fully offline.</li><li><b>RADIO:</b> internet radio news (add your own https stream) and a button to open the phone’s FM Radio app, which works with no internet.</li><li><b>MY CARD:</b> blood group, allergies and contacts, shown big on screen.</li></ul><p>The bottom bar always has CALL 999, CALL 112 and STOP ALL. The home-screen widget shows the clock, battery, last location and a tip, with SIREN, WHISTLE, SOS LIGHT, LOCATE, CALL 999 and OPEN buttons. Always call emergency services first if someone is in danger.</p>'],
       ['20 · Sending any file', '<p>You can send almost any file between phone and PC (apps, videos, documents, photos). Small ones go through the private link; big ones (over 5 MB) go over Wi-Fi when both are on the same network.</p><ul><li>For safety, files that start by themselves on a PC (such as .bat, .cmd, .vbs, .ps1, .scr, .lnk) are refused. Zip them first.</li><li>Saved files go to Downloads / Jarvis.</li></ul>'],
       ['21 · PC screen and typing', '<ul><li>Say “explain my screen” or “what is on my screen”. Jarvis reads the text on screen, or looks at the picture if your AI can see images (Gemini, OpenAI, Claude, Grok, Groq).</li><li>Say “open Notepad and write a letter about…”. Jarvis brings the app to the front and types it.</li><li>The PC dashboard shows processor, memory, storage, calendar and a control deck with quick buttons.</li></ul>'],
-      ['22 · If something does not work', '<ul><li><b>“Key rejected”:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only phone commands work.</li><li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>']
+      ['22 · If something does not work', '<ul><li><b>“Key rejected”:</b> the key was copied wrongly or has spaces; paste it again and tap Test.</li><li><b>No reply / offline:</b> check your internet. Offline, only ' + (PC ? 'PC' : 'phone') + ' commands and the built-in tools work.</li>' + (PC ? '<li><b>Jarvis cannot hear you:</b> check the Windows microphone privacy setting and that no other app is using it.</li><li><b>Typing in Notepad fails:</b> say the app name (“open Notepad and write …”); Jarvis brings it to the front before typing.</li><li><b>“Explain my screen” fails:</b> use an AI that can see images (Gemini, OpenAI, Claude, Grok, Groq) or check Windows text recognition is installed.</li>' : '<li><b>Jarvis cannot hear you:</b> allow the microphone in Phone Access and check no other app is using it.</li><li><b>Typing in apps fails:</b> make sure the Accessibility switch is on, then tap the text box and retry.</li><li><b>Widget shows old data:</b> open Jarvis once; it refreshes the widget.</li>') + '<li><b>Weather missing:</b> add the OpenWeather key and city in Services.</li></ul><p>Run <b>Settings › Setup Check</b> any time — it lists what is missing and has FIX buttons.</p>'],
     ];
+    var MP = { 1: 'p', 4: 'p', 6: 'p', 7: 'p', 8: 'p', 15: 'p', 17: 'c', 21: 'c' }, mn = 0;
+    MAN = MAN.filter(function (m) { var k = MP[parseInt(m[0], 10)]; return !k || (PC ? k === 'c' : k === 'p'); }).map(function (m) { return [(++mn) + ' · ' + m[0].replace(/^\d+ · /, ''), m[1]]; });
     MAN.forEach(function (m, i) {
       var d = el('details', 'man'); if (i === 0) d.open = true;
       var sm1 = el('summary', '', m[0]); d.appendChild(sm1);
@@ -4127,7 +4063,6 @@
     sb.appendChild(bc);
     body.appendChild(sb);
 
-    body.appendChild(el('div', 'foot', 'J.A.R.V.I.S · v1.40.2' + (PC ? ' · PC' : '')));
     if (window.CerebroCore && window.CEREBRO_STAMP) {
       var cs = el('div', 'foot core-line', esc(window.CEREBRO_STAMP.display)); body.appendChild(cs);
       window.CerebroCore.verify().then(function (r) { cs.innerHTML = esc(r.display) + '<br><b style="color:' + (r.ok ? 'var(--ok,#3ddc84)' : 'var(--bad,#ff5a5a)') + '">' + (r.ok ? 'CORE VERIFIED' : 'CORE NOT VERIFIED') + '</b>'; });

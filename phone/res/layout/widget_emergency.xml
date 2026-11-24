@@ -6,20 +6,60 @@
     android:background="@drawable/widget_em_bg"
     android:orientation="vertical"
     android:padding="10dp">
-    <TextView
-        android:id="@+id/we_title"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:letterSpacing="0.25"
+        android:orientation="horizontal">
+        <TextView
+            android:id="@+id/we_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:letterSpacing="0.22"
+            android:singleLine="true"
+            android:text="J.A.R.V.I.S  EMERGENCY"
+            android:textColor="#FF5A5A"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+        <TextClock
+            android:id="@+id/we_clock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:format12Hour="hh:mm a"
+            android:format24Hour="HH:mm"
+            android:textColor="#FFD6D6"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+    <TextView
+        android:id="@+id/we_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
         android:singleLine="true"
-        android:text="J.A.R.V.I.S  EMERGENCY"
-        android:textColor="#FF5A5A"
-        android:textSize="10sp"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
         android:textStyle="bold" />
+    <TextView
+        android:id="@+id/we_fix"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:singleLine="true"
+        android:textColor="#E6B4B4"
+        android:textSize="11sp" />
+    <TextView
+        android:id="@+id/we_tip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:maxLines="2"
+        android:textColor="#FF9A9A"
+        android:textSize="11sp" />
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="5dp"
         android:layout_weight="1"
         android:orientation="horizontal">
         <TextView
@@ -27,38 +67,91 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
+            
             android:background="@drawable/widget_em_btn"
             android:gravity="center"
-            android:letterSpacing="0.12"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
             android:text="SIREN"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/we_whistle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginLeft="5dp"
+            android:background="@drawable/widget_em_btn"
+            android:gravity="center"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
+            android:text="WHISTLE"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
             android:textStyle="bold" />
         <TextView
             android:id="@+id/we_sos"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginLeft="6dp"
             android:layout_weight="1"
+            android:layout_marginLeft="5dp"
             android:background="@drawable/widget_em_btn"
             android:gravity="center"
-            android:letterSpacing="0.12"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
             android:text="SOS LIGHT"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="5dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+        <TextView
+            android:id="@+id/we_track"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            
+            android:background="@drawable/widget_em_btn"
+            android:gravity="center"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
+            android:text="LOCATE"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/we_call"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginLeft="5dp"
+            android:background="@drawable/widget_em_btn"
+            android:gravity="center"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
+            android:text="CALL 999"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
             android:textStyle="bold" />
         <TextView
             android:id="@+id/we_open"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginLeft="6dp"
             android:layout_weight="1"
+            android:layout_marginLeft="5dp"
             android:background="@drawable/widget_em_btn"
             android:gravity="center"
-            android:letterSpacing="0.12"
+            android:letterSpacing="0.1"
+            android:singleLine="true"
             android:text="OPEN"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>

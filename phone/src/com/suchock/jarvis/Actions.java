@@ -132,8 +132,13 @@ final class Actions {
                     String er = Emergency.morseStart(ctx, m, "loop".equals(arg2) || "sos".equals(arg));
                     return er == null ? res(true, "Signalling with the flashlight.") : res(false, er);
                 }
-                case "emstop": { Emergency.soundStop(); Emergency.morseStop(); Emergency.trackStop(); FindPhone.stop(ctx); return res(true, "All emergency signals are off."); }
-                case "emstate": return res(true, Emergency.soundKind() + "|" + (Emergency.morsePlaying() ? 1 : 0) + "|" + (Emergency.tracking() ? 1 : 0));
+                case "emstop": Radio.stop(); { Emergency.soundStop(); Emergency.morseStop(); Emergency.trackStop(); FindPhone.stop(ctx); return res(true, "All emergency signals are off."); }
+                case "emstate": return res(true, Emergency.soundKind() + "|" + (Emergency.morsePlaying() ? 1 : 0) + "|" + (Emergency.tracking() ? 1 : 0) + "|" + Radio.status() + "|" + Radio.url());
+                case "radio": {
+                    if ("off".equals(arg) || arg == null || arg.length() == 0) { Radio.stop(); return res(true, "Radio off."); }
+                    String m = Radio.start(ctx, arg);
+                    return res(Radio.status().length() > 0, m);
+                }
                 case "emtrack": {
                     Emergency.remember(ctx);
                     if ("off".equals(arg)) { Emergency.trackStop(); return res(true, "Location tracking is off."); }

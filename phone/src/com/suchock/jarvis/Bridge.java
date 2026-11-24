@@ -1143,7 +1143,7 @@ public final class Bridge implements Voice.Emitter {
 
     @JavascriptInterface
     public String appInfo() {
-        return "{\"version\":\"1.40.2\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
+        return "{\"version\":\"1.41.0\",\"sdk\":" + android.os.Build.VERSION.SDK_INT + "}";
     }
 }
 // CRB-MARK 6e321f954dcd

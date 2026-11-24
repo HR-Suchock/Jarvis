@@ -18,14 +18,39 @@ final class NetTools {
     static JSONObject call(String kind, String arg) throws Exception {
         JSONObject o = new JSONObject();
         if ("ping".equals(kind)) {
-            long t = System.nanoTime();
-            drain(open("https://speed.cloudflare.com/__down?bytes=0", "GET", 8000));
-            o.put("ms", (System.nanoTime() - t) / 1000000.0);
+            String[] u = { "https://speed.cloudflare.com/__down?bytes=0", "https://www.gstatic.com/generate_204", "https://cachefly.cachefly.net/10mb.test" };
+            Exception last = null;
+            for (String url : u) {
+                try {
+                    long t = System.nanoTime();
+                    HttpURLConnection c = open(url, "GET", 8000);
+                    int code = c.getResponseCode();
+                    if (code >= 400) throw new Exception("error " + code);
+                    long ms = (System.nanoTime() - t) / 1000000;
+                    c.disconnect();
+                    o.put("ms", (double) ms);
+                    return o;
+                } catch (Exception e) {
+                    last = e;
+                }
+            }
+            throw friendly(last);
         } else if ("down".equals(kind)) {
             long bytes = clamp(arg, 100000, 60000000);
-            long t = System.nanoTime();
-            long got = drain(open("https://speed.cloudflare.com/__down?bytes=" + bytes, "GET", 30000));
-            o.put("bytes", got).put("ms", (System.nanoTime() - t) / 1000000.0);
+            String[] u = { "https://speed.cloudflare.com/__down?bytes=" + bytes, "https://proof.ovh.net/files/10Mb.dat", "https://cachefly.cachefly.net/10mb.test" };
+            Exception last = null;
+            for (String url : u) {
+                try {
+                    long t = System.nanoTime();
+                    long got = drainLimit(open(url, "GET", 30000), bytes);
+                    if (got <= 0) throw new Exception("empty answer");
+                    o.put("bytes", got).put("ms", (System.nanoTime() - t) / 1000000.0);
+                    return o;
+                } catch (Exception e) {
+                    last = e;
+                }
+            }
+            throw friendly(last);
         } else if ("up".equals(kind)) {
             long bytes = clamp(arg, 50000, 30000000);
             HttpURLConnection c = open("https://speed.cloudflare.com/__up", "POST", 30000);
@@ -39,7 +64,7 @@ final class NetTools {
             while (left > 0) { int n = (int) Math.min(buf.length, left); os.write(buf, 0, n); left -= n; }
             os.flush();
             os.close();
-            drain(c);
+            try { drain(c); } catch (Exception e) { throw friendly(e); }
             o.put("bytes", bytes).put("ms", (System.nanoTime() - t) / 1000000.0);
         } else if ("hibp".equals(kind)) {
             if (arg == null || !arg.matches("[0-9A-Fa-f]{5}")) throw new Exception("Bad request.");
@@ -67,8 +92,29 @@ final class NetTools {
         c.setReadTimeout(timeout);
         c.setUseCaches(false);
         c.setRequestProperty("Cache-Control", "no-cache");
-        c.setRequestProperty("User-Agent", "Jarvis");
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36");
+        c.setRequestProperty("Referer", "https://speed.cloudflare.com/");
+        c.setRequestProperty("Origin", "https://speed.cloudflare.com");
         return c;
+    }
+
+    private static Exception friendly(Exception e) {
+        if (e instanceof java.net.UnknownHostException || e instanceof java.net.ConnectException || e instanceof java.net.SocketTimeoutException)
+            return new Exception("I could not reach the test servers. Check that the internet is on, then try again.");
+        return new Exception("The test servers did not answer" + (e != null && e.getMessage() != null ? " (" + e.getMessage() + ")" : "") + ". Try again in a moment.");
+    }
+
+    private static long drainLimit(HttpURLConnection c, long max) throws Exception {
+        int code = c.getResponseCode();
+        if (code >= 400) throw new Exception("error " + code);
+        InputStream in = c.getInputStream();
+        byte[] buf = new byte[65536];
+        long n = 0;
+        int r;
+        while (n < max && (r = in.read(buf)) > 0) n += r;
+        in.close();
+        c.disconnect();
+        return n;
     }
 
     private static long drain(HttpURLConnection c) throws Exception {

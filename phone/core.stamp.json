@@ -2,11 +2,11 @@
  "owner": "HR SUCHOCK",
  "core": "CEREBRO CORE",
  "project": "Jarvis",
- "version": "1.40.2",
- "date": "2026-11-23",
- "tree": "296291883c1e980426161a675990d9e7d7a4bd19645b600b4342d28f0dc0f128",
- "files": 76,
- "sig": "4f4f79a746f8ce47cf51b4cb971c656c97d28aaff423c0622d51edf319cb6b8a44bf7d7714d7f97ff5c5b1f14665918932679f50b1030b37a909a8b522971416",
- "code": "CRB-4D8C-5F3C",
- "display": "HR SUCHOCK · CEREBRO CORE · JARVIS · v1.40.2 · CRB-4D8C-5F3C"
+ "version": "1.41.0",
+ "date": "2026-11-24",
+ "tree": "0f297359361b48d1a35eed6fa676d0004121fcc4044b3182d0ceef1d029699a5",
+ "files": 77,
+ "sig": "e19a8cc4d58187738166faa1c36ee801ec22f6c89ecdd3118242e090d385245cb764fc449f40f2406fc39d8e02612e06ab32efe8efea6a288c644e2f1838030a",
+ "code": "CRB-2458-756F",
+ "display": "HR SUCHOCK · CEREBRO CORE · JARVIS · v1.41.0 · CRB-2458-756F"
 }

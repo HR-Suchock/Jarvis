@@ -25,7 +25,7 @@ echo "[2/6] aapt2 compile + link"
 "$AAPT2" compile --dir res -o "$OUT/res.zip"
 "$AAPT2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" --manifest AndroidManifest.xml \
   -R "$OUT/res.zip" -A assets --min-sdk-version 24 --target-sdk-version 34 \
-  --version-code 81 --version-name 1.40.2 --auto-add-overlay
+  --version-code 82 --version-name 1.41.0 --auto-add-overlay
 
 echo "[3/6] javac"
 javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$ANDROID_JAR" -d "$OUT/classes" $(find src -name '*.java')
