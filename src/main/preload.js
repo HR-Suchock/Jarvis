@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('jarvisPC', {
   action: (t, a, b) => sync('action', t, a, b),
   actionAsync: (t, a, b) => ipcRenderer.invoke('action:async', t, a, b),
   sysInfo: () => sync('sysinfo'),
+  procs: () => ipcRenderer.invoke('pc:procs'),
   appInfo: () => sync('appinfo'),
   reportBattery: (b) => ipcRenderer.send('battery', b),
   openUrl: (u) => sync('openurl', u),

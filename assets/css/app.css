@@ -646,3 +646,47 @@ details.man .manb h4{margin:14px 0 6px;color:var(--cy);font-size:14px;letter-spa
 .cores{display:flex;align-items:flex-end;gap:4px;height:70px;margin-top:8px}
 .cores i{flex:1;background:var(--cy);opacity:.85;min-height:2px}
 /* CRB-MARK 920fcc837379 */
+
+.em-launch{display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-bottom:10px;padding:14px;border:1px solid #ff4b4b;background:linear-gradient(90deg,rgba(255,59,59,.26),rgba(120,10,12,.18));color:#ffe9e9;box-shadow:0 0 18px rgba(255,59,59,.28),inset 0 0 0 1px rgba(255,120,120,.25);clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+.em-launch .eml-ic{flex:0 0 42px;height:42px;border:1px solid #ff6b6b;display:grid;place-items:center}
+.em-launch .eml-ic svg{width:24px;height:24px;stroke:#ff6b6b;fill:none;stroke-width:1.8}
+.em-launch .eml-t{flex:1;min-width:0}
+.em-launch b{display:block;letter-spacing:.2em;color:#ff7b7b;font-family:'Orbitron',sans-serif;font-size:15px}
+.em-launch small{color:#e6b4b4;font-size:13.5px}
+.em-launch .eml-go{letter-spacing:.14em;font-size:12.5px;padding:7px 10px;background:#d11f1f;color:#fff;font-weight:700}
+
+/* ---------- emergency v3: boot, sections, bar ---------- */
+.emboot{--cy:#ff3b3b;--cy2:#ff8f8f;--cyrgb:255,59,59;--mute:#c79a9a;position:fixed;inset:0;z-index:45;background:#060102 radial-gradient(90% 55% at 50% 38%,rgba(255,40,40,.22),transparent 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;transition:opacity .6s,visibility .6s}
+.emboot.out{opacity:0;visibility:hidden}
+.emboot .boot-rings circle{stroke:#ff3b3b}
+.emboot .boot-rings .core{fill:#ffd0d0;filter:drop-shadow(0 0 14px #ff3b3b)}
+.emboot .boot-title{color:#ff6b6b;text-shadow:0 0 22px rgba(255,59,59,.9)}
+.emboot .boot-sub{color:#e0a0a0}
+.emboot-log{margin-top:24px;width:min(88vw,340px);font-family:'Orbitron',sans-serif;font-size:10.5px;letter-spacing:.12em;color:#ff8f8f;min-height:130px;line-height:1.9}
+.emboot-log .ok{color:#ffd0d0}.emboot-log .wn{color:#ffb347}
+.emboot-log div{animation:emin .25s ease-out}
+@keyframes emin{from{opacity:0;transform:translateX(-8px)}}
+#emergency .panel-body{padding-bottom:12px}
+.em-tabs{display:flex;gap:6px;overflow-x:auto;position:sticky;top:-1px;z-index:3;background:#080102;padding:6px 0 8px;margin:0 -2px 4px;scrollbar-width:none}
+.em-tabs::-webkit-scrollbar{display:none}
+.em-tabs button{flex:0 0 auto;border:1px solid var(--line);padding:9px 14px;letter-spacing:.14em;font-size:13px;color:var(--cy2);background:rgba(255,59,59,.06)}
+.em-tabs button.on{background:#d11f1f;color:#fff;border-color:#ff8f8f;box-shadow:0 0 12px rgba(255,59,59,.5)}
+.em-bar{display:flex;gap:8px;padding:8px 12px calc(var(--safe-b) + 8px);background:#0c0203;border-top:1px solid var(--line2);flex:0 0 auto}
+.em-bar .em-btn{padding:12px 6px;font-size:13px}
+.em-tag{margin-top:4px;font-size:11px;letter-spacing:.16em;color:#c79a9a}
+
+/* ---- PC panels: clock, programs, quick controls */
+.hp-clk{display:flex;align-items:baseline;justify-content:space-between}
+.hp-clk b{font-size:22px;font-weight:300;letter-spacing:.06em;color:var(--tx);white-space:nowrap}
+.hp-clk span{white-space:nowrap;font-size:11px;letter-spacing:.14em;color:var(--cy)}
+.hp-apl{list-style:none;margin:0;padding:0;font-size:12px;letter-spacing:.05em}
+.hp-apl li{position:relative;display:flex;justify-content:space-between;padding:3px 0 7px;color:var(--tx)}
+.hp-apl li em{font-style:normal;color:var(--mute)}
+.hp-apl li i{position:absolute;left:0;bottom:2px;height:3px;background:var(--cy);opacity:.8}
+.hp-dkg{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;pointer-events:auto}
+.hp-dkg button{background:rgba(var(--cyrgb),.10);border:1px solid rgba(var(--cyrgb),.4);color:var(--cy);font:inherit;font-size:11px;letter-spacing:.1em;padding:6px 2px;cursor:pointer}
+.hp-dkg button:hover{background:rgba(var(--cyrgb),.25)}
+@media (max-height:980px){html.pc-hud .hp.hp-apps{display:none}}
+@media (max-height:1020px){html.pc-hud .hp.hp-deck{display:none}}
+@media (max-height:700px){html.pc-hud .hp.hp-clk{display:none}}
+/* CRB-MARK 920fcc837379 */

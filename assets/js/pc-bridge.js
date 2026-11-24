@@ -284,6 +284,7 @@
       o.net = navigator.onLine === false ? 'offline' : 'wifi';
       return J(o);
     },
+    procs: function () { return P.procs ? P.procs() : Promise.resolve([]); },
     openUrl: function (u) { P.openUrl(u); },
     copyText: function (t) { P.copy(t); },
     minimize: function () { P.minimize(); },

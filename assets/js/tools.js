@@ -202,7 +202,7 @@
   }
   function stopTick() { if (tick) { clearInterval(tick); tick = null; } abort = true; if (panel && panel.cleanup) { try { panel.cleanup(); } catch (e) { /* */ } panel.cleanup = null; } }
 
-  var TOOLS = [];
+  var TOOLS = [], viaHome = false;
   function reg(id, icon, name, desc, pcOnly, build) { TOOLS.push({ id: id, icon: icon, name: name, desc: desc, pcOnly: pcOnly, build: build }); }
 
   /* speed */
@@ -219,12 +219,12 @@
         var minP = Math.min.apply(null, r.ping), jit = Math.max.apply(null, r.ping) - minP; set(fmt(minP, 0) + ' ms', 'Ping');
         var sizes = [1000000, 4000000, 12000000, 25000000], t0 = Date.now();
         for (i = 0; i < sizes.length && !abort; i++) { var d = await host.net('down', String(sizes[i])); var m = mbps(d); r.down = Math.max(r.down, m); set(fmt(m, 1) + ' Mbps', 'Download…'); if (d.ms > 3500 || Date.now() - t0 > 12000) break; }
-        sizes = [500000, 2000000, 6000000]; t0 = Date.now();
-        for (i = 0; i < sizes.length && !abort; i++) { d = await host.net('up', String(sizes[i])); m = mbps(d); r.up = Math.max(r.up, m); set(fmt(m, 1) + ' Mbps', 'Upload…'); if (d.ms > 3500 || Date.now() - t0 > 10000) break; }
+        sizes = [500000, 2000000, 6000000]; t0 = Date.now(); var upErr = false;
+        try { for (i = 0; i < sizes.length && !abort; i++) { d = await host.net('up', String(sizes[i])); m = mbps(d); r.up = Math.max(r.up, m); set(fmt(m, 1) + ' Mbps', 'Upload…'); if (d.ms > 3500 || Date.now() - t0 > 10000) break; } } catch (ue) { upErr = true; }
         if (abort) return;
         set(fmt(r.down, 1) + ' Mbps', 'Download speed');
         var q = r.down >= 25 ? 'Great for video calls and HD streaming.' : r.down >= 8 ? 'Fine for browsing and video.' : r.down >= 2 ? 'Slow: browsing works, video may buffer.' : 'Very slow connection.';
-        res.innerHTML = '<b>Download</b> ' + fmt(r.down, 1) + ' Mbps<br><b>Upload</b> ' + fmt(r.up, 1) + ' Mbps<br><b>Ping</b> ' + fmt(minP, 0) + ' ms · jitter ' + fmt(jit, 0) + ' ms<br><span style="color:var(--mute)">' + q + '</span>';
+        res.innerHTML = '<b>Download</b> ' + fmt(r.down, 1) + ' Mbps<br><b>Upload</b> ' + (upErr && !r.up ? 'not available' : fmt(r.up, 1) + ' Mbps') + '<br><b>Ping</b> ' + fmt(minP, 0) + ' ms · jitter ' + fmt(jit, 0) + ' ms<br><span style="color:var(--mute)">' + q + '</span>';
         host.remember && host.remember('speed', 'Download ' + fmt(r.down, 1) + ' Mbps, upload ' + fmt(r.up, 1) + ' Mbps, ping ' + fmt(minP, 0) + ' ms.');
       } catch (e) { set('—', 'Test failed'); res.textContent = (e && e.message) || (typeof e === 'string' ? e : 'The test could not finish. Check your internet connection.'); }
       go.disabled = false;
@@ -465,8 +465,8 @@
     b.appendChild(h('div', '', '<small style="color:var(--mute)">Small helpers that run on this ' + (host.PC ? 'PC' : 'phone') + '. None of them use your AI keys or tokens.</small>'));
     var g = h('div'); g.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px';
     TOOLS.forEach(function (t) {
-      if ((t.pcOnly && !host.PC) || (host.hidden && host.hidden(t.id))) return; var c = h('button', 'card'); c.style.cssText = 'text-align:left;padding:14px;min-height:92px;display:flex;flex-direction:column;gap:4px;margin:0'; c.innerHTML = '<span style="font-size:26px;color:var(--cy2)">' + ic(t.icon) + '</span><b>' + esc(t.name) + '</b><small style="color:var(--mute)">' + esc(t.desc) + '</small>';
-      c.addEventListener('click', function () { view(t.name, t.build); }); g.appendChild(c);
+      if ((t.pcOnly && !host.PC)) return; var c = h('button', 'card'); c.style.cssText = 'text-align:left;padding:14px;min-height:92px;display:flex;flex-direction:column;gap:4px;margin:0'; c.innerHTML = '<span style="font-size:26px;color:var(--cy2)">' + ic(t.icon) + '</span><b>' + esc(t.name) + '</b><small style="color:var(--mute)">' + esc(t.desc) + '</small>';
+      c.addEventListener('click', function () { viaHome = true; view(t.name, t.build); }); g.appendChild(c);
     });
     b.appendChild(g);
   }
@@ -491,12 +491,12 @@
   var api = {
     init: function (h0) {
       host = h0; panel = host.makePanel('tools', 'TOOLS'); panel.root.addEventListener('transitionend', function () { if (!panel.isOpen) { stopTick(); } });
-      var close = panel.close; panel.close = function () { stopTick(); close(); };
+      var close = panel.close; panel.close = function () { stopTick(); if (viaHome && current) { viaHome = false; home(); return; } viaHome = false; current = null; close(); };
       return api;
     },
     open: function (id, autostart) {
       if (!panel) return; panel.open(); var t = TOOLS.filter(function (x) { return x.id === id && (!x.pcOnly || host.PC); })[0];
-      if (t) { view(t.name, t.build); if (autostart) { var go = panel.body.querySelector('.btn.pri'); if (go) setTimeout(function () { go.click(); }, 350); } } else home();
+      if (t) { viaHome = false; view(t.name, t.build); if (autostart) { var go = panel.body.querySelector('.btn.pri'); if (go) setTimeout(function () { go.click(); }, 350); } } else home();
     },
     intent: intent, icon: ic, list: function () { return TOOLS.filter(function (t) { return !t.pcOnly || (host && host.PC); }).map(function (t) { return { id: t.id, name: t.name, desc: t.desc, icon: t.icon }; }); },
     calc: calcLine, urlCheck: urlCheck, urlSummary: urlSummary, toMorse: toMorse, fromMorse: fromMorse, strength: strength, sha1: sha1, sha256: sha256, convertUnit: convertUnit, normUnit: normUnit, genPass: genPass, beepMorse: beepMorse

@@ -244,17 +244,19 @@ async function serpapi(key, query) {
 /* Tools panel helpers (same host list as the phone): speed test, password-leak check (only 5 hash characters leave the PC), currency rates. */
 async function netcall(kind, arg) {
   const t0 = () => process.hrtime.bigint(), ms = (t) => Number(process.hrtime.bigint() - t) / 1e6;
+  const HDR = { 'Cache-Control': 'no-cache', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36', Referer: 'https://speed.cloudflare.com/', Origin: 'https://speed.cloudflare.com' };
   const get = async (url, to, extra) => {
-    let res; try { res = await doFetch(url, Object.assign({ method: 'GET', signal: AbortSignal.timeout(to), headers: { 'Cache-Control': 'no-cache' } }, extra || {})); } catch (e) { throw netError(e); }
+    let res; try { res = await doFetch(url, Object.assign({ method: 'GET', signal: AbortSignal.timeout(to), headers: Object.assign({}, HDR) }, extra || {})); } catch (e) { throw netError(e); }
     if (res.status >= 400) throw new Error('The service did not answer. Try again later.');
     return res;
   };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.floor(+v) || lo));
-  if (kind === 'ping') { const t = t0(); await (await get('https://speed.cloudflare.com/__down?bytes=0', 8000)).arrayBuffer(); return { ms: ms(t) }; }
-  if (kind === 'down') { const b = clamp(arg, 100000, 60000000), t = t0(); const buf = await (await get('https://speed.cloudflare.com/__down?bytes=' + b, 30000)).arrayBuffer(); return { bytes: buf.byteLength, ms: ms(t) }; }
+  const first = async (urls, fn) => { let last; for (const u of urls) { try { return await fn(u); } catch (e) { last = e; } } throw new Error('I could not reach the test servers. Check that the internet is on, then try again.' + (last && last.message && !/internet/i.test(last.message) ? ' (' + last.message + ')' : '')); };
+  if (kind === 'ping') return first(['https://speed.cloudflare.com/__down?bytes=0', 'https://www.gstatic.com/generate_204', 'https://cachefly.cachefly.net/10mb.test'], async (u) => { const t = t0(); const r = await get(u, 8000); if (u.endsWith('10mb.test')) { try { await r.body.cancel(); } catch (e) { /* ignore */ } } else await r.arrayBuffer(); return { ms: ms(t) }; });
+  if (kind === 'down') { const b = clamp(arg, 100000, 60000000); return first(['https://speed.cloudflare.com/__down?bytes=' + b, 'https://proof.ovh.net/files/10Mb.dat', 'https://cachefly.cachefly.net/10mb.test'], async (u) => { const t = t0(); const buf = await (await get(u, 30000)).arrayBuffer(); if (!buf.byteLength) throw new Error('empty'); return { bytes: Math.min(buf.byteLength, b), ms: ms(t) * (Math.min(buf.byteLength, b) / buf.byteLength) }; }); }
   if (kind === 'up') {
     const b = clamp(arg, 50000, 30000000), t = t0(); let res;
-    try { res = await doFetch('https://speed.cloudflare.com/__up', { method: 'POST', body: Buffer.alloc(b), headers: { 'Content-Type': 'application/octet-stream' }, signal: AbortSignal.timeout(30000) }); } catch (e) { throw netError(e); }
+    try { res = await doFetch('https://speed.cloudflare.com/__up', { method: 'POST', body: Buffer.alloc(b), headers: Object.assign({}, HDR, { 'Content-Type': 'application/octet-stream' }), signal: AbortSignal.timeout(30000) }); } catch (e) { throw netError(e); }
     await res.arrayBuffer(); if (res.status >= 400) throw new Error('The test server answered with an error. Try again in a moment.');
     return { bytes: b, ms: ms(t) };
   }

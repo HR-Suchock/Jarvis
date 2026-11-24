@@ -416,6 +416,10 @@ function wireIpc() {
     if (disk && disk.total > 0) { o.stoPct = Math.round(100 - disk.free * 100 / disk.total); o.stoFreeGB = Math.round(disk.free / 1.0737418e8) / 10; o.stoTotalGB = Math.round(disk.total / 1.0737418e8) / 10; }
     e.returnValue = JSON.stringify(o);
   });
+  handle('pc:procs', () => new Promise((res) => {
+    if (process.platform !== 'win32') return res([]);
+    require('child_process').execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => res(err ? [] : require('./ball').parseTasklist(out).slice(0, 5)));
+  }));
   ipcMain.on('battery', (e, b) => { if (trusted(e) && b && typeof b.pct === 'number') battery = { pct: Math.round(b.pct), charging: !!b.charging }; });
   on('openurl', (e, u) => { if (typeof u === 'string' && /^https?:\/\/\S+$/i.test(u)) shell.openExternal(u); e.returnValue = ''; });
   on('copy', (e, t) => { if (typeof t === 'string') clipboard.writeText(t.slice(0, 20000)); e.returnValue = ''; });
